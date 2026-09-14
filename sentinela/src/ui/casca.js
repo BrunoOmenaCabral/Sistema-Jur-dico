@@ -7,6 +7,7 @@ import { usuarioAtual, sair, pode } from '../core/auth.js';
 import { buscaGlobal, indicadores, sincronizarNotificacoes } from '../core/dominio.js';
 import { debounce, fmtDataHora } from '../core/util.js';
 import { ir, rotaAtual } from './roteador.js';
+import { MARCA } from '../core/marca.js';
 
 export const MENU = [
   { grupo: 'Operação', itens: [
@@ -16,6 +17,7 @@ export const MENU = [
     { rota: 'publicacoes', rotulo: 'Publicações', ico: '📰', permissao: 'publicacoes:ver', contador: 'publicacoesPendentes' },
     { rota: 'tarefas', rotulo: 'Tarefas', ico: '✓', permissao: 'tarefas:ver' },
     { rota: 'audiencias', rotulo: 'Audiências', ico: '⚖', permissao: 'audiencias:ver' },
+    { rota: 'relatorio-processual', rotulo: 'Relatório processual', ico: '📤', permissao: 'relatorios:ver' },
   ] },
   { grupo: 'Cadastros', itens: [
     { rota: 'processos', rotulo: 'Processos', ico: '📁', permissao: 'processos:ver' },
@@ -48,7 +50,7 @@ export function montarCasca() {
       <aside class="lateral" id="lateral">
         <div class="lateral__marca">
           <span style="font-size:1.3rem">⚖️</span>
-          <div>SENTINELA<small>GESTÃO JURÍDICA</small></div>
+          <div>${esc(MARCA)}<small>GESTÃO JURÍDICA</small></div>
         </div>
         <nav class="lateral__nav" id="nav"></nav>
         <div class="lateral__rodape" id="rodape-lateral"></div>
@@ -148,7 +150,7 @@ function montarBarraInferior() {
 export function atualizarNavegacao() { montarMenu(); montarBarraInferior(); }
 
 export function definirTitulo(texto) {
-  document.title = `${texto} · Sentinela`;
+  document.title = `${texto} · ${MARCA}`;
 }
 
 /* --------------------------------------------------------- busca global -- */

@@ -79,7 +79,7 @@ await teste('serviço responde', async () => {
 await teste('aplicação é servida na raiz', async () => {
   const r = await fetch(`${BASE}/`);
   assert.equal(r.status, 200);
-  assert.match(await r.text(), /Sentinela/);
+  assert.match(await r.text(), /Jursistemy/);
   assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
 });
 await teste('não serve arquivo fora do diretório da aplicação', async () => {

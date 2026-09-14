@@ -249,14 +249,15 @@ export function abrirFormularioPrazo(valores = {}, aoConcluir) {
       <span class="mini mudo">art. 224 do CPC</span></div>
     <div class="cartao__corpo">
       <div class="form__linha form__linha--3">
-        <div class="campo"><label>Disponibilização no diário</label><input type="date" name="cDisp"></div>
-        <div class="campo"><label>Data da publicação</label><input type="date" name="cPub"></div>
+        <div class="campo"><label>Disponibilização no diário</label>
+          <input type="date" name="cDisp">
+          <span class="campo__ajuda" data-publicacao>A data da publicação é apurada pelo sistema.</span></div>
         <div class="campo"><label>Dias do prazo</label><input type="number" name="cDias" min="1" value="15"></div>
-      </div>
-      <div class="form__linha form__linha--3">
         <div class="campo"><label>Contagem</label>
           <select name="cContagem"><option value="uteis">Dias úteis (art. 219 do CPC)</option>
           <option value="corridos">Dias corridos</option></select></div>
+      </div>
+      <div class="form__linha form__linha--3">
         <div class="campo"><label>Multiplicador</label>
           <select name="cMult"><option value="1">Prazo simples</option>
           <option value="2">Prazo em dobro (arts. 183, 186 e 229 do CPC)</option></select></div>
@@ -312,7 +313,6 @@ export function abrirFormularioPrazo(valores = {}, aoConcluir) {
     const processo = processoDe(form.elements.processoId.value);
     const r = calcularPrazo({
       dataDisponibilizacao: calculadora.querySelector('[name="cDisp"]').value || null,
-      dataPublicacao: calculadora.querySelector('[name="cPub"]').value || null,
       dias: Number(calculadora.querySelector('[name="cDias"]').value),
       contagem: calculadora.querySelector('[name="cContagem"]').value,
       multiplicador: Number(calculadora.querySelector('[name="cMult"]').value),
@@ -330,6 +330,10 @@ export function abrirFormularioPrazo(valores = {}, aoConcluir) {
     };
     form.elements.dataInicio.value = r.inicio;
     form.elements.dataVencimento.value = r.vencimento;
+    const legenda = calculadora.querySelector('[data-publicacao]');
+    legenda.textContent = r.dataPublicacao
+      ? `Publicação apurada: ${fmtData(r.dataPublicacao)} (art. 224, §2º, do CPC).`
+      : 'A data da publicação é apurada pelo sistema.';
     area.innerHTML = `<div class="aviso aviso--ok">
         <div><span class="negrito">Vencimento em ${esc(fmtData(r.vencimento))}</span>
         <div class="mini">Início da contagem: ${esc(fmtData(r.inicio))} · ${esc(r.resumoRegra)}</div></div></div>

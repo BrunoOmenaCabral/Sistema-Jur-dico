@@ -98,6 +98,7 @@ export function fichaProcesso(id) {
       <button class="btn" data-acao="tarefa">Nova tarefa</button>
       <button class="btn" data-acao="audiencia">Nova audiência</button>
       <button class="btn" data-acao="documento">Anexar documento</button>
+      <button class="btn" data-acao="movimentacao">Registrar movimentação</button>
       <button class="btn" data-acao="editar">Editar</button>`,
     `${p.classe || ''} · ${p.assunto || ''}`)}
 
@@ -144,9 +145,16 @@ export function fichaProcesso(id) {
 
   const paineis = {
     timeline: () => timeline.length ? `<ul class="timeline">${timeline.map((t) => `
-      <li data-tipo="${esc(t.tipo)}" ${t.rota ? `data-rota="${esc(t.rota)}" style="cursor:pointer"` : ''}>
-        <div class="timeline__data">${esc(fmtData(t.data))}</div>
-        <div class="timeline__titulo">${esc(t.titulo)}</div>
+      <li data-tipo="${esc(t.tipo)}">
+        <div class="linha linha--entre">
+          <div class="timeline__data">${esc(fmtData(t.data))}
+            ${t.origem ? `<span class="selo selo--neutro">${esc(t.origem)}</span>` : ''}</div>
+          ${t.editavel ? `<span class="linha">
+            <button class="btn btn--pequeno" data-editar-mov="${esc(t.registroId)}">Editar</button>
+            <button class="btn btn--pequeno btn--perigo" data-excluir-mov="${esc(t.registroId)}">Excluir</button>
+          </span>` : ''}
+        </div>
+        <div class="timeline__titulo" ${t.rota ? `data-rota="${esc(t.rota)}" style="cursor:pointer"` : ''}>${esc(t.titulo)}</div>
         ${t.detalhe ? `<div class="timeline__detalhe quebra">${esc(String(t.detalhe).slice(0, 400))}</div>` : ''}
       </li>`).join('')}</ul>` : '<div class="vazio">Sem registros na linha do tempo.</div>',
 
@@ -190,7 +198,62 @@ export function fichaProcesso(id) {
   delegar(tela, 'click', '[data-acao="audiencia"]', () => abrirFormularioAudiencia({ processoId: id, clienteId: p.clienteId }, () => recarregar()));
   delegar(tela, 'click', '[data-acao="documento"]', () => abrirFormularioDocumento({ processoId: id, clienteId: p.clienteId }, () => recarregar()));
   delegar(tela, 'click', '[data-acao="editar"]', () => abrirFormularioProcesso(p, () => recarregar()));
+  delegar(tela, 'click', '[data-acao="movimentacao"]', () =>
+    abrirFormularioMovimentacao({ processoId: id }, () => recarregar()));
+  delegar(tela, 'click', '[data-editar-mov]', (_e, el) =>
+    abrirFormularioMovimentacao(db.obter('movimentacoes', el.dataset.editarMov), () => recarregar()));
+  delegar(tela, 'click', '[data-excluir-mov]', async (_e, el) => {
+    const ok = await confirmar({
+      titulo: 'Excluir movimentação',
+      mensagem: 'O registro sai da linha do tempo, mas permanece recuperável na lixeira. Confirma?',
+      rotuloOk: 'Excluir', perigo: true,
+    });
+    if (!ok) return;
+    db.remover('movimentacoes', el.dataset.excluirMov, 'Movimentação excluída na linha do tempo');
+    aviso('Movimentação excluída.', 'atencao');
+    recarregar();
+  });
   return tela;
+}
+
+/* ------------------------------------------- movimentações da linha do tempo */
+
+/**
+ * Inclusão e correção manual da linha do tempo.
+ *
+ * O que chega do DJEN e do andamento processual é preservado. Este cadastro
+ * existe para o que o tribunal não publica, para o que veio incompleto e para
+ * o registro interno do escritório. A origem fica marcada em cada item, de
+ * modo que a leitura distinga o capturado do lançado à mão.
+ */
+export function abrirFormularioMovimentacao(valores = {}, aoConcluir) {
+  const edicao = Boolean(valores.id);
+  const campos = [
+    { nome: 'data', rotulo: 'Data', tipo: 'date', obrigatorio: true },
+    { nome: 'origem', rotulo: 'Origem', tipo: 'select', vazio: false, largura: 2,
+      opcoes: [
+        { valor: 'manual', rotulo: 'Registro interno do escritório' },
+        { valor: 'andamento processual', rotulo: 'Andamento processual do tribunal' },
+        { valor: 'DJEN', rotulo: 'Diário de Justiça Eletrônico Nacional' },
+      ] },
+    { nome: 'titulo', rotulo: 'Movimentação', tipo: 'text', obrigatorio: true, largura: 3,
+      ajuda: 'Ex.: Decisão publicada, Juntada de petição, Conclusos para sentença.' },
+    { nome: 'descricao', rotulo: 'Teor', tipo: 'textarea', largura: 3,
+      ajuda: 'Texto do despacho ou da decisão. É a partir dele que o sistema descreve a novidade ao cliente.' },
+  ];
+
+  return modalFormulario({
+    titulo: edicao ? 'Editar movimentação' : 'Registrar movimentação',
+    campos, largo: true,
+    valores: { data: hoje(), origem: 'manual', ...valores },
+    rotuloSalvar: edicao ? 'Salvar alterações' : 'Registrar',
+    aoSalvar: (dados) => {
+      if (edicao) db.atualizar('movimentacoes', valores.id, dados, 'Movimentação alterada');
+      else db.inserir('movimentacoes', dados, 'Movimentação registrada');
+      aviso(edicao ? 'Movimentação atualizada.' : 'Movimentação incluída na linha do tempo.', 'ok');
+      aoConcluir?.();
+    },
+  });
 }
 
 /* -------------------------------------------------------------- cadastro */

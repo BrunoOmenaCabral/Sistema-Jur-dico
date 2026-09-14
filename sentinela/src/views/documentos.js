@@ -4,7 +4,7 @@
 // limite conservador de tamanho. O ponto de troca para armazenamento em nuvem
 // é a função `guardarArquivo`.
 
-import { h, qs, esc, delegar, aviso, confirmar } from '../ui/ui.js';
+import { h, qs, esc, delegar, aviso, confirmar, modal } from '../ui/ui.js';
 import { modalFormulario } from '../ui/formulario.js';
 import { cabecalhoPagina, opcoesProcessos, opcoesClientes } from '../ui/componentes.js';
 import { db } from '../core/store.js';
@@ -50,7 +50,8 @@ export function documentos() {
         <td>${esc(tamanho(d.tamanho))}</td>
         <td>${esc(fmtData(d.criadoEm))}</td>
         <td class="linha">
-          ${d.conteudoArquivo ? `<button class="btn btn--pequeno" data-baixar="${d.id}">Baixar</button>` : ''}
+          ${d.conteudoArquivo ? `<button class="btn btn--pequeno" data-ver="${d.id}">Visualizar</button>
+          <button class="btn btn--pequeno" data-baixar="${d.id}">Baixar</button>` : ''}
           <button class="btn btn--pequeno btn--perigo" data-excluir="${d.id}">Excluir</button></td>
       </tr>`;
     }).join('')}</tbody></table>`
@@ -60,6 +61,7 @@ export function documentos() {
   delegar(tela, 'change', '[data-filtro]', (_e, el) => { filtro[el.dataset.filtro] = el.value; desenhar(); });
   delegar(tela, 'input', 'input[data-filtro]', (_e, el) => { filtro[el.dataset.filtro] = el.value; desenhar(); });
   delegar(tela, 'click', '[data-acao="novo"]', () => abrirFormularioDocumento({}, desenhar));
+  delegar(tela, 'click', '[data-ver]', (_e, el) => visualizarDocumento(db.obter('documentos', el.dataset.ver)));
   delegar(tela, 'click', '[data-baixar]', (_e, el) => {
     const d = db.obter('documentos', el.dataset.baixar);
     fetch(d.conteudoArquivo).then((r) => r.blob()).then((b) => baixarArquivo(d.nome, b));
@@ -126,5 +128,69 @@ function guardarArquivo(arquivo) {
     leitor.onload = () => resolve(leitor.result);
     leitor.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
     leitor.readAsDataURL(arquivo);
+  });
+}
+
+/* ----------------------------------------------------------- visualização */
+
+/** Formatos que o navegador exibe sem auxílio de programa externo. */
+function formatoDe(documento) {
+  const tipo = String(documento.tipo || '').toLowerCase();
+  const nome = String(documento.nome || '').toLowerCase();
+  if (tipo === 'application/pdf' || nome.endsWith('.pdf')) return 'pdf';
+  if (tipo.startsWith('image/')) return 'imagem';
+  if (tipo.startsWith('video/')) return 'video';
+  if (tipo.startsWith('audio/')) return 'audio';
+  if (tipo.startsWith('text/') || /\.(txt|csv|md|json|xml)$/.test(nome)) return 'texto';
+  return 'desconhecido';
+}
+
+/**
+ * Abre o documento em tela, sem baixar.
+ *
+ * O arquivo está gravado como data URL. Convertê-lo em blob antes de exibir
+ * evita o bloqueio que o navegador impõe a data URL dentro de quadro e libera
+ * a leitura de PDF com o visualizador nativo. O endereço temporário é
+ * descartado ao fechar, para não deixar cópia do documento em memória.
+ */
+export async function visualizarDocumento(documento) {
+  if (!documento?.conteudoArquivo) { aviso('Este registro não possui arquivo anexado.', 'atencao'); return; }
+  const formato = formatoDe(documento);
+  const blob = await (await fetch(documento.conteudoArquivo)).blob();
+  const url = URL.createObjectURL(blob);
+
+  let corpo;
+  if (formato === 'pdf') {
+    corpo = `<iframe class="visualizador" src="${url}#view=FitH" title="${esc(documento.nome)}"></iframe>`;
+  } else if (formato === 'imagem') {
+    corpo = `<div class="visualizador visualizador--centro"><img src="${url}" alt="${esc(documento.nome)}"></div>`;
+  } else if (formato === 'video') {
+    corpo = `<div class="visualizador visualizador--centro"><video src="${url}" controls></video></div>`;
+  } else if (formato === 'audio') {
+    corpo = `<div class="pilha"><audio src="${url}" controls style="width:100%"></audio></div>`;
+  } else if (formato === 'texto') {
+    corpo = `<pre class="visualizador visualizador--texto">${esc(await blob.text())}</pre>`;
+  } else {
+    corpo = `<div class="aviso aviso--info">Este formato não é exibido pelo navegador.
+      ${esc(documento.tipo || 'tipo não identificado')}. Utilize o download para abrir no programa adequado.</div>`;
+  }
+
+  modal({
+    titulo: documento.nome, largo: true,
+    conteudo: `<div class="mini mudo" style="margin-bottom:.5rem">
+        ${esc(documento.categoria || '')} · ${esc(tamanho(documento.tamanho))}
+      </div>${corpo}`,
+    acoes: [
+      { rotulo: 'Baixar', aoClicar: () => baixarArquivo(documento.nome, blob) },
+      { rotulo: 'Fechar', classe: 'btn--primario', aoClicar: (fechar) => fechar() },
+    ],
+    aoAbrir: (_corpo, fechar) => {
+      // Libera o endereço temporário assim que a janela é encerrada.
+      const observador = new MutationObserver(() => {
+        if (!document.body.contains(_corpo)) { URL.revokeObjectURL(url); observador.disconnect(); }
+      });
+      observador.observe(document.body, { childList: true });
+      void fechar;
+    },
   });
 }

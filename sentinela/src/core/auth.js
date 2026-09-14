@@ -37,6 +37,33 @@ export async function criarUsuario({ nome, email, senha, perfil = 'advogado', oa
   }, `Usuário ${nome} criado`);
 }
 
+/**
+ * Criação de conta pela própria pessoa.
+ *
+ * Só existe no modo local, em que a base vive no navegador de quem usa e não
+ * há dado de terceiro exposto. Como essa base é inteiramente do próprio
+ * usuário, a conta criada administra o escritório dele. Havendo backend, o
+ * cadastro continua sendo ato do administrador, que responde pelo acesso de
+ * cada pessoa aos processos do escritório.
+ */
+export async function registrarConta({ nome, email, senha, oab = '' }) {
+  if (modoAtual() === 'servidor') {
+    throw new Error('Neste servidor as contas são criadas pelo administrador do escritório.');
+  }
+  const limpo = String(email || '').trim().toLowerCase();
+  if (!String(nome || '').trim()) throw new Error('Informe o nome completo.');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(limpo)) throw new Error('Informe um e-mail válido.');
+  if (String(senha || '').length < 8) throw new Error('A senha deve ter ao menos 8 caracteres.');
+  if (db.listar('usuarios').some((u) => norm(u.email) === norm(limpo))) {
+    throw new Error('Já existe conta cadastrada com este e-mail.');
+  }
+  const usuario = await criarUsuario({
+    nome: String(nome).trim(), email: limpo, senha, oab, perfil: 'admin',
+  });
+  await autenticar(limpo, senha);
+  return usuario;
+}
+
 export async function definirSenha(usuarioId, senha) {
   if (modoAtual() === 'servidor') return api.definirSenha(usuarioId, senha);
   const sal = uid('sal');

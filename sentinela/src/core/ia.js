@@ -135,6 +135,158 @@ function calcularConfianca({ processo, dias, explicito, tipo }) {
   return s;
 }
 
+/* ------------------------------------------- leitura de despacho/decisão -- */
+
+// Natureza do ato judicial. A ordem importa: a sentença absorve expressões
+// que também aparecem em decisão interlocutória.
+const PADROES_NATUREZA = [
+  [/julgo\s+(procedente|improcedente|parcialmente|extinto)|senten[çc]a|homologo o acordo/, 'sentença'],
+  [/ac[óo]rd[ãa]o|dou provimento|nego provimento|conhe[çc]o do recurso/, 'acórdão'],
+  [/defiro|indefiro|concedo|denego|tutela (de urg[êe]ncia|antecipada)|liminar|decis[ãa]o/, 'decisão'],
+  [/design(o|ada|ei|ada a)|audi[êe]ncia/, 'designação de audiência'],
+  [/cumpra-se|intime-se|manifeste-se|despacho|vista dos autos/, 'despacho'],
+  [/juntada|petição protocolada|certid[ãa]o/, 'juntada'],
+];
+
+// Cada determinação é reconhecida por uma expressão e descrita em linguagem
+// direta. Nada é afirmado sem que a expressão apareça no texto do ato.
+const PADROES_DETERMINACAO = [
+  [/\b(defiro|concedo|deferid[ao]) a (tutela|liminar|antecipa)/, 'o pedido de tutela de urgência foi deferido'],
+  [/(indefiro|denego|indeferid[ao]) a (tutela|liminar|antecipa)/, 'o pedido de tutela de urgência foi indeferido'],
+  [/julgo procedente/, 'o pedido foi julgado procedente'],
+  [/julgo parcialmente procedente/, 'o pedido foi julgado parcialmente procedente'],
+  [/julgo improcedente/, 'o pedido foi julgado improcedente'],
+  [/julgo extinto|extin[çc][ãa]o do processo/, 'o processo foi extinto'],
+  [/homologo o acordo|acordo homologado/, 'o acordo foi homologado'],
+  [/dou provimento/, 'o recurso foi provido'],
+  [/nego provimento/, 'o recurso foi desprovido'],
+  [/determino a per[íi]cia|per[íi]cia (m[ée]dica|cont[áa]bil|t[ée]cnica)|nomeio perito/, 'foi determinada a realização de perícia'],
+  [/cite-se|determino a cita[çc][ãa]o/, 'foi determinada a citação da parte contrária'],
+  [/intime-se a parte contr[áa]ria|intima[çc][ãa]o da parte (r[ée]|adversa)/, 'a parte contrária foi intimada'],
+  [/expe[çc]a-se (o )?(mandado|of[íi]cio|alvar[áa])/, 'foi determinada a expedição de mandado, ofício ou alvará'],
+  [/suspens[ãa]o do (processo|feito)|suspendo o (processo|feito)/, 'o processo foi suspenso'],
+  [/arquivem-se|determino o arquivamento/, 'foi determinado o arquivamento'],
+  [/convers[ãa]o em dilig[êe]ncia/, 'os autos foram convertidos em diligência'],
+  [/custas|recolhimento das custas/, 'houve determinação sobre custas processuais'],
+];
+
+// Abertura da descrição conforme o ato. Sentença e despacho são proferidos,
+// audiência é designada, juntada não é ato do juízo.
+const ABERTURA_NATUREZA = {
+  'sentença': 'Foi proferida sentença',
+  'acórdão': 'Foi proferido acórdão',
+  'decisão': 'Foi proferida decisão',
+  'despacho': 'Foi proferido despacho',
+  'designação de audiência': 'Foi designada audiência',
+  'juntada': 'Houve juntada de petição ou documento',
+};
+
+/**
+ * Lê o texto de um despacho, decisão ou movimentação e devolve o que dali se
+ * extrai com segurança: a natureza do ato, as determinações identificadas e o
+ * prazo, quando houver. O que não estiver escrito não é suposto.
+ */
+export function analisarAndamento(texto) {
+  const bruto = String(texto || '').trim();
+  const t = norm(bruto);
+  if (!t) return { natureza: null, determinacoes: [], dias: null, tipo: null, resumo: '', confiavel: false };
+
+  const natureza = (PADROES_NATUREZA.find(([re]) => re.test(t)) || [])[1] || null;
+  const determinacoes = PADROES_DETERMINACAO.filter(([re]) => re.test(t)).map(([, texto]) => texto);
+  const dias = extrairDias(bruto);
+  const tipo = extrairTipo(bruto);
+  const audiencia = bruto.match(/(\d{2}\/\d{2}\/\d{4})/);
+  const partes = [];
+  if (natureza === 'designação de audiência') {
+    partes.push(audiencia ? `Foi designada audiência para ${audiencia[1]}` : 'Foi designada audiência');
+  } else if (natureza) partes.push(ABERTURA_NATUREZA[natureza]);
+  if (determinacoes.length) partes.push(determinacoes.join(', '));
+  if (dias) {
+    const rotulo = TIPOS_PRAZO.find((x) => x.id === tipo)?.rotulo;
+    partes.push(`foi aberto prazo de ${dias} dias${rotulo && tipo !== 'outros' ? ` para ${rotulo.toLowerCase()}` : ''}`);
+  }
+
+  return {
+    natureza,
+    determinacoes,
+    dias,
+    tipo: tipo === 'outros' ? null : tipo,
+    resumo: partes.length ? `${partes.join('; ')}.` : '',
+    // Sem natureza nem determinação, o texto não sustenta descrição objetiva.
+    confiavel: Boolean(natureza || determinacoes.length),
+  };
+}
+
+/**
+ * Apura o que houve de novo no processo desde uma data e descreve de forma
+ * objetiva, para comunicação ao cliente.
+ *
+ * Considera publicações e movimentações, que são o que o sistema recebe do
+ * DJEN e do acompanhamento processual. Quando o texto não permite descrição
+ * segura, o item é devolvido marcado como tal, e não inventado.
+ */
+export function novidadesDoProcesso(processoId, { desde = null, limite = 12 } = {}) {
+  const processo = processoDe(processoId);
+  if (!processo) return { processo: null, itens: [], texto: '' };
+
+  const corte = desde || ultimaComunicacao(processoId);
+  const itens = [];
+
+  for (const pub of db.listar('publicacoes', { processoId })) {
+    const data = pub.dataPublicacao || pub.dataDisponibilizacao;
+    if (!data || (corte && data <= corte)) continue;
+    itens.push({ data, origem: 'DJEN', ...analisarAndamento(pub.conteudo), fonte: pub.conteudo });
+  }
+  for (const mov of db.listar('movimentacoes', { processoId })) {
+    if (!mov.data || (corte && mov.data <= corte)) continue;
+    const analise = analisarAndamento(`${mov.titulo || ''} ${mov.descricao || ''}`);
+    itens.push({ data: mov.data, origem: mov.origem === 'manual' ? 'registro interno' : 'andamento processual',
+      ...analise, fonte: mov.descricao || mov.titulo });
+  }
+
+  itens.sort((a, b) => String(b.data).localeCompare(String(a.data)));
+  const recortados = itens.slice(0, limite);
+
+  const linhas = recortados.map((i) => {
+    const descricao = i.confiavel ? i.resumo
+      : `houve movimentação registrada${i.fonte ? `: ${String(i.fonte).replace(/\s+/g, ' ').slice(0, 180)}` : ''}.`;
+    return `• ${fmtData(i.data)} — ${descricao}`;
+  });
+
+  return {
+    processo,
+    desde: corte,
+    itens: recortados,
+    texto: linhas.join('\n'),
+  };
+}
+
+/** Data da última comunicação enviada ao cliente sobre este processo. */
+function ultimaComunicacao(processoId) {
+  const enviadas = db.listar('comunicacoes', { processoId })
+    .map((c) => String(c.enviadoEm || '').slice(0, 10)).filter(Boolean).sort();
+  return enviadas.at(-1) || null;
+}
+
+/**
+ * Texto pronto para o cliente com o que mudou no processo. É rascunho: a tela
+ * de comunicações abre o conteúdo em edição antes de qualquer envio.
+ */
+export function mensagemNovidades(processoId, { desde = null } = {}) {
+  const v = novidadesDoProcesso(processoId, { desde });
+  if (!v.processo) return '';
+  const cliente = nomeCliente(v.processo.clienteId);
+  const primeiroNome = String(cliente || 'cliente').split(' ')[0];
+  const cabecalho = `Olá, ${primeiroNome}. Segue a atualização do processo nº ${fmtCNJ(v.processo.numeroCNJ)}.`;
+
+  if (!v.itens.length) {
+    return `${cabecalho}\n\nNão houve movimentação nova desde a última comunicação. `
+      + 'O processo segue em acompanhamento pelo escritório.';
+  }
+  return `${cabecalho}\n\n${v.texto}\n\n`
+    + 'Permanecemos acompanhando o andamento e informaremos qualquer novidade.';
+}
+
 /* ---------------------------------------------- assistente do processo -- */
 
 /**
@@ -271,4 +423,71 @@ function descreverProvidencia(prazos, audiencias) {
   if (audiencias.length) return 'comparecimento à audiência designada';
   if (prazos.length) return 'protocolo da petição dentro do prazo indicado';
   return 'acompanhamento das movimentações do processo';
+}
+
+/* --------------------------------------------- relatório processual ------ */
+
+/**
+ * Relatório de movimentações para envio ao cliente.
+ *
+ * Difere do relatório geral por recortar um período e descrever cada
+ * movimentação a partir da leitura do despacho ou decisão correspondente.
+ * Só entra no texto o que foi efetivamente recebido do DJEN, do andamento
+ * processual ou registrado pelo escritório.
+ */
+export function relatorioProcessual({ clienteId, processoId = null, desde = null }) {
+  const cliente = clienteId ? db.obter('clientes', clienteId) : null;
+  const processos = processoId
+    ? [processoDe(processoId)].filter(Boolean)
+    : db.listar('processos', { clienteId }).filter((p) => p.status === 'ativo');
+
+  if (!cliente || !processos.length) {
+    return { cliente, processos: [], texto: '', vazio: true };
+  }
+
+  const escritorio = db.config().escritorio;
+  const linhas = [
+    `RELATÓRIO PROCESSUAL — ${cliente.nome}`,
+    `Emitido em ${fmtData(hoje())} por ${escritorio.nome}`,
+  ];
+  if (desde) linhas.push(`Período considerado: a partir de ${fmtData(desde)}`);
+  linhas.push('');
+
+  let totalMovimentos = 0;
+  for (const p of processos) {
+    const v = novidadesDoProcesso(p.id, { desde, limite: 30 });
+    const prazos = db.listar('prazos', { processoId: p.id })
+      .filter((x) => ['pendente', 'andamento'].includes(x.status))
+      .sort((a, b) => String(a.dataVencimento).localeCompare(String(b.dataVencimento)));
+    const audiencias = db.listar('audiencias', { processoId: p.id })
+      .filter((a) => a.data >= hoje() && a.status !== 'cancelada');
+
+    linhas.push(`PROCESSO ${fmtCNJ(p.numeroCNJ)}`);
+    linhas.push(`Assunto: ${p.assunto || p.classe || 'não informado'}`);
+    if (p.vara || p.tribunal) linhas.push(`Juízo: ${[p.vara, p.tribunal].filter(Boolean).join(' — ')}`);
+    linhas.push('');
+    linhas.push('Movimentações do período:');
+    if (v.itens.length) {
+      totalMovimentos += v.itens.length;
+      linhas.push(v.texto);
+    } else {
+      linhas.push('• Não houve movimentação no período. O processo segue em acompanhamento.');
+    }
+    if (audiencias.length) {
+      const a = audiencias[0];
+      linhas.push('');
+      linhas.push(`Audiência designada para ${fmtData(a.data)}${a.hora ? ` às ${a.hora}` : ''}`
+        + `${a.modalidade ? ` (${a.modalidade.toLowerCase()})` : ''}.`);
+    }
+    if (prazos.length) {
+      linhas.push('');
+      linhas.push(`Próxima providência do escritório: ${fmtData(prazos[0].dataVencimento)}.`);
+    }
+    linhas.push('');
+  }
+
+  linhas.push('Este relatório reúne o andamento dos seus processos no período indicado. '
+    + 'Qualquer dúvida pode ser encaminhada diretamente ao escritório.');
+
+  return { cliente, processos, desde, totalMovimentos, texto: linhas.join('\n'), vazio: false };
 }

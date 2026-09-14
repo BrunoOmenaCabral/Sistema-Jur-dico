@@ -22,7 +22,8 @@ const { validarCNJ, fmtCNJ, addDays, hoje, diffDias } = await import('../src/cor
 const { pascoa, calendarioAplicavel, ehDiaUtil, proximoDiaUtil } = await import('../src/core/feriados.js');
 const { calcularPrazo } = await import('../src/core/calculo-prazo.js');
 const { db } = await import('../src/core/store.js');
-const { interpretarPublicacao, relatorioCliente } = await import('../src/core/ia.js');
+const { interpretarPublicacao, relatorioCliente, analisarAndamento, novidadesDoProcesso,
+  relatorioProcessual } = await import('../src/core/ia.js');
 const { conflitosDePrazo, indicadores, eventosAgenda, linhaDoTempo } = await import('../src/core/dominio.js');
 
 let passou = 0;
@@ -230,6 +231,84 @@ teste('gera texto em linguagem acessível', () => {
   assert.ok(r.texto.includes('RELATÓRIO PROCESSUAL'));
   assert.ok(/Situação atual:/.test(r.texto));
   assert.ok(/Próxima providência:/.test(r.texto));
+});
+
+console.log('\nPublicação apurada a partir da disponibilização');
+teste('disponibilização na sexta publica na segunda', () => {
+  // 11/09/2026 é sexta-feira.
+  const r = calcularPrazo({ dataDisponibilizacao: '2026-09-11', dias: 15, contagem: 'uteis' });
+  assert.equal(r.dataPublicacao, '2026-09-14');
+  assert.equal(r.inicio, '2026-09-15');
+});
+teste('disponibilização em dia útil publica no dia seguinte', () => {
+  const r = calcularPrazo({ dataDisponibilizacao: '2026-09-09', dias: 15, contagem: 'uteis' });
+  assert.equal(r.dataPublicacao, '2026-09-10');
+});
+teste('calcula sem que a publicação seja informada', () => {
+  const r = calcularPrazo({ dataDisponibilizacao: '2026-09-11', dias: 5, contagem: 'uteis' });
+  assert.ok(!r.erro);
+  assert.ok(r.vencimento > r.inicio);
+});
+
+console.log('\nLeitura de despachos e decisões');
+teste('identifica decisão, deferimento e prazo aberto', () => {
+  const r = analisarAndamento('Defiro a tutela de urgência. Manifeste-se a parte ré no prazo de 15 dias.');
+  assert.equal(r.natureza, 'decisão');
+  assert.equal(r.dias, 15);
+  assert.ok(r.determinacoes.includes('o pedido de tutela de urgência foi deferido'));
+});
+teste('não confunde indeferimento com deferimento', () => {
+  const r = analisarAndamento('Indefiro a liminar requerida.');
+  assert.ok(r.determinacoes.includes('o pedido de tutela de urgência foi indeferido'));
+  assert.ok(!r.determinacoes.includes('o pedido de tutela de urgência foi deferido'));
+});
+teste('reconhece sentença de procedência', () => {
+  const r = analisarAndamento('Julgo procedente o pedido e condeno a ré.');
+  assert.equal(r.natureza, 'sentença');
+  assert.ok(/julgado procedente/.test(r.resumo));
+});
+teste('designação de audiência não se repete na descrição', () => {
+  const r = analisarAndamento('Designo audiência de conciliação para 20/10/2026.');
+  assert.equal(r.resumo, 'Foi designada audiência para 20/10/2026.');
+});
+teste('texto sem conteúdo jurídico não gera descrição inventada', () => {
+  const r = analisarAndamento('Documento ilegível recebido.');
+  assert.equal(r.confiavel, false);
+  assert.equal(r.resumo, '');
+});
+
+console.log('\nRelatório processual');
+teste('apura as movimentações do processo', () => {
+  const v = novidadesDoProcesso(processo.id, { desde: addDays(hoje(), -365) });
+  assert.ok(v.itens.length > 0);
+  assert.ok(v.itens.every((i) => i.data && i.origem));
+});
+teste('monta relatório com as movimentações do período', () => {
+  const r = relatorioProcessual({ clienteId: processo.clienteId, desde: addDays(hoje(), -365) });
+  assert.equal(r.vazio, false);
+  assert.ok(r.texto.includes('RELATÓRIO PROCESSUAL'));
+  assert.ok(r.texto.includes('Movimentações do período:'));
+});
+teste('cliente sem processo ativo não gera relatório vazio de conteúdo', () => {
+  const r = relatorioProcessual({ clienteId: 'inexistente' });
+  assert.equal(r.vazio, true);
+  assert.equal(r.texto, '');
+});
+
+console.log('\nLinha do tempo');
+teste('cada registro informa a origem', () => {
+  const t = linhaDoTempo(processo.id);
+  const comOrigem = t.filter((i) => i.origem);
+  assert.ok(comOrigem.length > 0);
+  assert.ok(comOrigem.some((i) => i.tipo === 'movimentacao'));
+});
+teste('movimentação lançada à mão entra na linha do tempo e é editável', () => {
+  const m = db.inserir('movimentacoes', { processoId: processo.id, data: hoje(),
+    titulo: 'Conclusos para sentença', descricao: 'Autos conclusos.', origem: 'manual' });
+  const item = linhaDoTempo(processo.id).find((i) => i.registroId === m.id);
+  assert.ok(item);
+  assert.equal(item.origem, 'manual');
+  assert.equal(item.editavel, true);
 });
 
 console.log(`\n${passou} verificações concluídas.`);

@@ -24,6 +24,7 @@ import { tarefas } from './views/tarefas.js';
 import { audiencias } from './views/audiencias.js';
 import { documentos } from './views/documentos.js';
 import { relatorios } from './views/relatorios.js';
+import { relatorioProcessualView } from './views/relatorio-processual.js';
 import { financeiro } from './views/financeiro.js';
 import { comunicacoes } from './views/comunicacoes.js';
 import { ia } from './views/ia.js';
@@ -41,6 +42,7 @@ const TELAS = [
   ['audiencias', audiencias, 'audiencias:ver'],
   ['documentos', documentos, 'documentos:ver'],
   ['relatorios', relatorios, 'relatorios:ver'],
+  ['relatorio-processual', relatorioProcessualView, 'relatorios:ver'],
   ['financeiro', financeiro, 'financeiro:ver'],
   ['comunicacoes', comunicacoes, 'comunicacoes:ver'],
   ['ia', ia, 'ia:usar'],

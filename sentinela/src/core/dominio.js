@@ -366,14 +366,18 @@ export function linhaDoTempo(processoId) {
   const p = processoDe(processoId);
   if (!p) return [];
   const itens = [];
-  const add = (data, tipo, titulo, detalhe, rota) => data && itens.push({ data, tipo, titulo, detalhe, rota });
+  // `origem` diz de onde veio o registro: diário oficial, andamento do
+  // tribunal ou lançamento do próprio escritório. `editavel` marca o que pode
+  // ser corrigido à mão sem desfazer o que foi capturado automaticamente.
+  const add = (data, tipo, titulo, detalhe, rota, extra = {}) =>
+    data && itens.push({ data, tipo, titulo, detalhe, rota, origem: null, ...extra });
 
   add(p.dataDistribuicao, 'processo', 'Distribuição',
     `${p.classe || 'Processo'} distribuído${p.vara ? ` na ${p.vara}` : ''}`, null);
 
   for (const pub of db.listar('publicacoes', { processoId })) {
     add(pub.dataPublicacao, 'publicacao', 'Publicação recebida',
-      pub.conteudo, `#/publicacoes/${pub.id}`);
+      pub.conteudo, `#/publicacoes/${pub.id}`, { origem: pub.origem || 'DJEN' });
   }
   for (const pr of db.listar('prazos', { processoId })) {
     add(pr.criadoEm?.slice(0, 10) || pr.dataInicio, 'prazo', 'Prazo cadastrado',
@@ -394,7 +398,8 @@ export function linhaDoTempo(processoId) {
     add(d.criadoEm?.slice(0, 10), 'documento', `Documento — ${d.categoria}`, d.nome, `#/documentos`);
   }
   for (const m of db.listar('movimentacoes', { processoId })) {
-    add(m.data, 'movimentacao', m.titulo || 'Movimentação', m.descricao, null);
+    add(m.data, 'movimentacao', m.titulo || 'Movimentação', m.descricao, null,
+      { origem: m.origem || 'andamento processual', editavel: true, registroId: m.id });
   }
   for (const c of db.listar('comunicacoes', { processoId })) {
     add((c.enviadoEm || '').slice(0, 10), 'comunicacao',

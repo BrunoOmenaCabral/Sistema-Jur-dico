@@ -173,6 +173,9 @@ export const publicacoes = {
         dataDisponibilizacao: bruta.dataDisponibilizacao || null,
         dataPublicacao: bruta.dataPublicacao || sugestao.dataPublicacao || ref,
         diario: bruta.diario || 'Importação manual',
+        // Marca a procedência para que a linha do tempo distinga o que veio do
+        // diário oficial do que foi lançado pelo escritório.
+        origem: bruta.origem || 'DJEN',
         conteudo: bruta.conteudo,
         status: 'pendente',
         sugestao,

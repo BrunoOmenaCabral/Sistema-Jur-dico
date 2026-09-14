@@ -1,12 +1,13 @@
 // Comunicações com o cliente: histórico e automações de WhatsApp/e-mail.
 
-import { h, qs, esc, delegar, aviso, confirmar } from '../ui/ui.js';
+import { h, qs, esc, delegar, aviso, modal } from '../ui/ui.js';
 import { modalFormulario } from '../ui/formulario.js';
 import { cabecalhoPagina, opcoesClientes, opcoesProcessos } from '../ui/componentes.js';
 import { db } from '../core/store.js';
 import { nomeCliente, processoDe } from '../core/dominio.js';
 import { whatsapp, email, automacoesPendentes, MODELOS_MENSAGEM, contextoMensagem } from '../core/integracoes.js';
-import { fmtDataHora, fmtCNJ } from '../core/util.js';
+import { fmtDataHora, fmtCNJ, fmtData } from '../core/util.js';
+import { mensagemNovidades, novidadesDoProcesso } from '../core/ia.js';
 import { definirTitulo } from '../ui/casca.js';
 
 export function comunicacoes() {
@@ -33,7 +34,9 @@ export function comunicacoes() {
               <div class="lista__corpo"><div class="lista__titulo">${esc(nomeCliente(f.clienteId))}
                 <span class="selo">${esc(f.tipo)}</span></div>
                 <div class="lista__meta quebra">${esc(f.mensagem)}</div></div>
-              <div class="lista__lado"><button class="btn btn--pequeno" data-enviar="${i}">Enviar</button></div>
+              <div class="lista__lado linha">
+                <button class="btn btn--pequeno" data-editar="${i}">Editar</button>
+                <button class="btn btn--pequeno btn--primario" data-enviar="${i}">Enviar</button></div>
             </li>`).join('')}</ul>`
     : '<div class="vazio">Nenhuma automação prevista para hoje.</div>'}
         </div>
@@ -63,6 +66,10 @@ export function comunicacoes() {
     try { await whatsapp.enviar(f); aviso('Mensagem registrada.', 'ok'); desenhar(); }
     catch (err) { aviso(err.message, 'erro'); }
   });
+  delegar(tela, 'click', '[data-editar]', (_e, el) => {
+    const f = tela._fila[Number(el.dataset.editar)];
+    abrirEdicaoMensagem(f, desenhar);
+  });
   delegar(tela, 'click', '[data-acao="nova"]', () => abrirNovaMensagem(desenhar));
   desenhar();
   return tela;
@@ -76,7 +83,8 @@ function abrirNovaMensagem(aoConcluir) {
       opcoes: [{ valor: 'whatsapp', rotulo: 'WhatsApp' }, { valor: 'email', rotulo: 'E-mail' },
         { valor: 'ambos', rotulo: 'Ambos' }] },
     { nome: 'modelo', rotulo: 'Modelo', tipo: 'select',
-      opcoes: [{ valor: 'atualizacao', rotulo: 'Atualização processual' },
+      opcoes: [{ valor: 'novidades', rotulo: 'Novidades do processo (leitura de despachos e decisões)' },
+        { valor: 'atualizacao', rotulo: 'Atualização processual' },
         { valor: 'documentos', rotulo: 'Solicitação de documentos' },
         { valor: 'prazoProximo', rotulo: 'Providência em andamento' },
         { valor: 'relatorioMensal', rotulo: 'Relatório disponível' }], largura: 2 },
@@ -107,9 +115,71 @@ function abrirNovaMensagem(aoConcluir) {
     const clienteId = ref.form.elements.clienteId.value;
     const processoId = ref.form.elements.processoId.value;
     if (!modelo || !clienteId) return;
+    if (modelo === 'novidades') {
+      if (!processoId) {
+        ref.avisos.innerHTML = '<div class="aviso aviso--atencao">Selecione o processo para que o '
+          + 'sistema leia os despachos e decisões recebidos.</div>';
+        return;
+      }
+      ref.avisos.innerHTML = '';
+      ref.form.elements.mensagem.value = mensagemNovidades(processoId);
+      ref.form.elements.assunto.value = 'Atualização do seu processo';
+      return;
+    }
     ref.form.elements.mensagem.value = MODELOS_MENSAGEM[modelo](contextoMensagem({ clienteId, processoId }));
   };
   ref.form.elements.modelo.addEventListener('change', preencher);
   ref.form.elements.clienteId.addEventListener('change', preencher);
   ref.form.elements.processoId.addEventListener('change', preencher);
+}
+
+/* ------------------------------------------------- edição antes do envio -- */
+
+/**
+ * Abre o texto sugerido em edição.
+ *
+ * Nenhuma mensagem redigida pelo sistema vai ao cliente sem passar por aqui:
+ * a redação automática é rascunho, e quem assina a comunicação é o escritório.
+ */
+export function abrirEdicaoMensagem(item, aoConcluir) {
+  const area = h(`<div class="pilha">
+    <div class="mini mudo">${esc(nomeCliente(item.clienteId))}${item.processoId
+    ? ` · ${esc(fmtCNJ(processoDe(item.processoId)?.numeroCNJ))}` : ''}</div>
+    <div class="campo"><label for="texto-mensagem">Mensagem</label>
+      <textarea id="texto-mensagem" rows="9">${esc(item.mensagem || '')}</textarea>
+      <span class="campo__ajuda">Revise antes de enviar. O texto abaixo é apenas sugestão do sistema.</span></div>
+    <div id="apuracao"></div>
+  </div>`);
+
+  // Quando há processo, mostra de onde saiu cada afirmação do rascunho.
+  if (item.processoId) {
+    const v = novidadesDoProcesso(item.processoId);
+    qs('#apuracao', area).innerHTML = v.itens.length
+      ? `<details><summary class="mini">Base da apuração (${v.itens.length} registro(s))</summary>
+          ${v.itens.map((i) => `<div class="mini mudo">• ${esc(fmtData(i.data))} · ${esc(i.origem)} —
+            ${esc(i.confiavel ? i.resumo : 'sem descrição segura a partir do texto recebido')}</div>`).join('')}
+        </details>`
+      : '<div class="mini mudo">Sem movimentação nova desde a última comunicação.</div>';
+  }
+
+  modal({
+    titulo: 'Revisar mensagem', conteudo: area, largo: true,
+    acoes: [
+      { rotulo: 'Cancelar', aoClicar: (fechar) => fechar() },
+      { rotulo: 'Regerar com IA', aoClicar: () => {
+        if (!item.processoId) { aviso('Sem processo vinculado para apurar novidades.', 'atencao'); return; }
+        qs('#texto-mensagem', area).value = mensagemNovidades(item.processoId);
+      } },
+      { rotulo: 'Enviar', classe: 'btn--primario', aoClicar: async (fechar) => {
+        const mensagem = qs('#texto-mensagem', area).value.trim();
+        if (!mensagem) { aviso('A mensagem está vazia.', 'erro'); return; }
+        try {
+          await whatsapp.enviar({ ...item, mensagem });
+          aviso('Mensagem registrada.', 'ok');
+          fechar();
+          aoConcluir?.();
+        } catch (e) { aviso(e.message, 'erro'); }
+      } },
+    ],
+  });
 }
