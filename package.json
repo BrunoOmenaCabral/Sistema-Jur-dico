@@ -1,0 +1,11 @@
+{
+  "name": "sentinela",
+  "version": "1.0.0",
+  "description": "Sistema de gestão de escritório de advocacia com foco em controle de prazos",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx http-server -p 8080 ..",
+    "test": "node testes/testes.mjs"
+  }
+}
