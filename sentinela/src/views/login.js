@@ -7,6 +7,8 @@ import { MARCA, ASSINATURA } from '../core/marca.js';
 
 export function telaLogin(aoEntrar) {
   const servidor = modoAtual() === 'servidor';
+  // Base ainda sem nenhuma conta: não há o que oferecer além do cadastro.
+  const baseVazia = !servidor && db.listar('usuarios').length === 0;
 
   const tela = h(`<div class="login">
     <form class="login__cartao">
@@ -17,8 +19,8 @@ export function telaLogin(aoEntrar) {
       </div>
 
       ${servidor ? '' : `<div class="abas abas--login">
-        <div class="aba ativa" data-modo="entrar">Entrar</div>
-        <div class="aba" data-modo="criar">Criar conta</div>
+        <div class="aba ${baseVazia ? '' : 'ativa'}" data-modo="entrar">Entrar</div>
+        <div class="aba ${baseVazia ? 'ativa' : ''}" data-modo="criar">Criar conta</div>
       </div>`}
 
       <div id="erro"></div>
@@ -28,7 +30,7 @@ export function telaLogin(aoEntrar) {
     </form>
   </div>`);
 
-  let modo = 'entrar';
+  let modo = baseVazia ? 'criar' : 'entrar';
 
   const CAMPOS = {
     entrar: `
@@ -53,7 +55,7 @@ export function telaLogin(aoEntrar) {
   const RODAPE = {
     entrar: servidor
       ? 'Acesso restrito aos usuários cadastrados pelo administrador do escritório.'
-      : 'Acesso de demonstração: <span class="mono">admin@escritorio.adv.br</span> / <span class="mono">sentinela</span>',
+      : 'Informe as credenciais da conta criada neste navegador.',
     criar: 'A conta e os dados ficam neste navegador, sob seu controle exclusivo. '
       + 'Nada é enviado a servidor algum.',
   };
@@ -91,13 +93,18 @@ export function telaLogin(aoEntrar) {
         await autenticar(qs('#email', tela).value, qs('#senha', tela).value);
       }
       db.backupAutomatico();
-      await aoEntrar();
+      await aoEntrar({ novaConta: modo === 'criar' });
     } catch (e) {
       botao.disabled = false;
       botao.textContent = rotulo;
       qs('#erro', tela).innerHTML = `<div class="aviso aviso--alerta">${esc(e.message)}</div>`;
     }
   });
+
+  if (baseVazia) {
+    qs('#campos', tela).insertAdjacentHTML('beforebegin',
+      '<div class="aviso aviso--info">Nenhuma conta cadastrada neste navegador. Crie a sua para começar.</div>');
+  }
 
   desenhar();
   document.body.innerHTML = '';

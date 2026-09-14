@@ -25,6 +25,7 @@ const { db } = await import('../src/core/store.js');
 const { interpretarPublicacao, relatorioCliente, analisarAndamento, novidadesDoProcesso,
   relatorioProcessual } = await import('../src/core/ia.js');
 const { conflitosDePrazo, indicadores, eventosAgenda, linhaDoTempo } = await import('../src/core/dominio.js');
+const { arquivadoEmDefinitivo, interpretarListaProcessos, tribunais } = await import('../src/core/integracoes.js');
 
 let passou = 0;
 const teste = (nome, fn) => {
@@ -309,6 +310,71 @@ teste('movimentação lançada à mão entra na linha do tempo e é editável', 
   assert.ok(item);
   assert.equal(item.origem, 'manual');
   assert.equal(item.editavel, true);
+});
+
+console.log('\nConsulta processual pela OAB');
+
+/** Monta um número CNJ válido para os casos de teste. */
+const cnjValido = (sequencial) => {
+  const base = `${String(sequencial).padStart(7, '0')}2026819000100`;
+  let resto = 0;
+  for (const ch of base) resto = (resto * 10 + Number(ch)) % 97;
+  const dv = String(98 - resto).padStart(2, '0');
+  return `${String(sequencial).padStart(7, '0')}${dv}20268190001`;
+};
+
+teste('baixa definitiva é reconhecida', () => {
+  assert.equal(arquivadoEmDefinitivo({ situacao: 'Arquivado definitivamente' }), true);
+  assert.equal(arquivadoEmDefinitivo({ situacao: 'Baixa definitiva' }), true);
+});
+teste('arquivamento provisório e suspensão não são descartados', () => {
+  assert.equal(arquivadoEmDefinitivo({ situacao: 'Arquivado provisoriamente' }), false);
+  assert.equal(arquivadoEmDefinitivo({ situacao: 'Suspenso' }), false);
+  assert.equal(arquivadoEmDefinitivo({ situacao: 'Em andamento' }), false);
+});
+teste('lista colada é lida com e sem colunas', () => {
+  const lista = interpretarListaProcessos(
+    `${fmtCNJ(cnjValido(101))}\n`
+    + `${fmtCNJ(cnjValido(102))};Procedimento Comum;Cobrança;1ª Vara;TJPE;Em andamento\n`
+    + 'linha sem processo algum');
+  assert.equal(lista.length, 2);
+  assert.equal(lista[1].classe, 'Procedimento Comum');
+  assert.equal(lista[1].situacao, 'Em andamento');
+});
+teste('importa apenas os processos ativos', () => {
+  const r = tribunais.importar([
+    { numeroCNJ: cnjValido(201), classe: 'Procedimento Comum', situacao: 'Em andamento' },
+    { numeroCNJ: cnjValido(202), classe: 'Execução', situacao: 'Arquivado definitivamente' },
+    { numeroCNJ: cnjValido(203), classe: 'Monitória', situacao: 'Arquivado provisoriamente' },
+    { numeroCNJ: '123', situacao: 'Em andamento' },
+  ]);
+  assert.equal(r.importados.length, 2);
+  assert.equal(r.arquivados.length, 1);
+  assert.equal(r.invalidos.length, 1);
+  assert.ok(r.importados.every((p) => p.status === 'ativo'));
+});
+teste('não duplica processo já cadastrado', () => {
+  const r = tribunais.importar([{ numeroCNJ: cnjValido(201), situacao: 'Em andamento' }]);
+  assert.equal(r.importados.length, 0);
+  assert.equal(r.duplicados.length, 1);
+});
+// O executor de testes é síncrono: a consulta é resolvida antes de asseverar.
+const semProvedor = await tribunais.consultarPorOAB({ oab: '12345', uf: 'PE' });
+const semOAB = await tribunais.consultarPorOAB({ oab: '', uf: 'PE' });
+teste('sem provedor a consulta não devolve processo algum', () => {
+  assert.equal(semProvedor.disponivel, false);
+  assert.equal(semProvedor.processos.length, 0);
+  assert.match(semProvedor.motivo, /provedor/i);
+});
+teste('consulta sem OAB informada é recusada', () => {
+  assert.equal(semOAB.disponivel, false);
+  assert.match(semOAB.motivo, /OAB/);
+});
+teste('processo importado aguarda vínculo com o cliente', () => {
+  const importado = db.listar('processos').find((p) => p.origem === 'consulta processual');
+  assert.ok(importado);
+  assert.equal(importado.clienteId, null);
+  assert.equal(importado.pendenteVinculoCliente, true);
 });
 
 console.log(`\n${passou} verificações concluídas.`);

@@ -114,7 +114,9 @@ export function configuracoes() {
     ['ia', 'Inteligência artificial', 'Provedor de leitura assistida. Sem provedor, é usada a análise heurística local.'],
     ['whatsapp', 'WhatsApp', 'API oficial do WhatsApp Business. Sem provedor, o sistema abre o WhatsApp Web.'],
     ['email', 'E-mail', 'Servidor de envio. Sem servidor, é aberto o cliente de e-mail padrão.'],
-    ['calendario', 'Calendário externo', 'Exportação unidirecional. A agenda do sistema é a fonte principal.']]
+    ['calendario', 'Calendário externo', 'Exportação unidirecional. A agenda do sistema é a fonte principal.'],
+    ['tribunais', 'Consulta processual', 'Busca de processos pela OAB. Depende de provedor contratado: '
+      + 'PJe, e-SAJ, eproc e Projudi exigem certificado ou credencial por tribunal.']]
     .map(([chave, titulo, texto]) => `
       <section class="cartao"><div class="cartao__corpo">
         <div class="linha linha--entre"><h3>${esc(titulo)}</h3>
@@ -309,7 +311,12 @@ export function configuracoes() {
         + 'de exemplo. Use apenas em ambiente de teste. Confirma?' })) return;
     el.disabled = true;
     const { semear } = await import('../core/seed.js');
-    await semear({ forcar: true, criarUsuarios: modoAtual() !== 'servidor' });
+    // Havendo conta criada, a demonstração se apoia nela: não se criam contas
+    // de exemplo, com senha conhecida, dentro da base de quem já usa o sistema.
+    await semear({
+      forcar: true,
+      criarUsuarios: modoAtual() !== 'servidor' && db.listar('usuarios').length === 0,
+    });
     if (modoAtual() === 'servidor') {
       const { enviarFila } = await import('../core/store.js');
       await enviarFila();

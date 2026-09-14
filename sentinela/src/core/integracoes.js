@@ -7,9 +7,9 @@
 // abre o WhatsApp Web, o cliente de e-mail ou gera o arquivo para download.
 
 import { db } from './store.js';
-import { fmtCNJ, fmtData, iso, hoje, addDays, uid } from './util.js';
+import { fmtCNJ, fmtData, iso, hoje, addDays, uid, norm, cnjDigitos } from './util.js';
 import { processoDe, clienteDe, nomeCliente } from './dominio.js';
-import { interpretarPublicacao } from './ia.js';
+import { interpretarPublicacao, extrairNumerosCNJ } from './ia.js';
 
 /* -------------------------------------------------------------- arquivo -- */
 
@@ -192,6 +192,127 @@ export const publicacoes = {
       mensagem: `${importadas} publicação(ões) importada(s); ${ignoradas} já existente(s).` };
   },
 };
+
+/* --------------------------------------------------- consulta processual -- */
+
+/**
+ * Reconhece o processo já baixado em definitivo.
+ *
+ * Arquivamento provisório, suspensão e sobrestamento não entram aqui: o
+ * processo continua vivo e precisa ser acompanhado. Só é descartado o que
+ * teve baixa definitiva ou arquivamento definitivo.
+ */
+export function arquivadoEmDefinitivo(bruto) {
+  const t = norm([bruto.status, bruto.situacao, bruto.fase, bruto.ultimoMovimento, bruto.movimento]
+    .filter(Boolean).join(' '));
+  if (!t) return false;
+  if (/arquivad[oa]\s+provisori|suspens|sobrestad/.test(t)) return false;
+  return /baixa definitiva|arquivamento definitivo|arquivad[oa]\s+(em\s+)?definitiv/.test(t)
+    || (/arquivad/.test(t) && /transito em julgado|baixa dos autos/.test(t));
+}
+
+/**
+ * Consulta processual pela inscrição na OAB.
+ *
+ * Não existe serviço público e aberto que devolva, pela OAB, os processos de
+ * um advogado em todos os tribunais. O DataJud do CNJ pesquisa por número de
+ * processo e não expõe a parte advogada. PJe, e-SAJ, eproc e Projudi exigem
+ * certificado digital ou credencial em cada tribunal. A busca por OAB é
+ * serviço de provedor contratado, e é a ele que este adaptador se liga.
+ *
+ * Sem provedor configurado nada é inventado: a consulta devolve o motivo, e a
+ * tela oferece a importação da lista que o próprio tribunal exporta.
+ */
+export const tribunais = {
+  disponivel() {
+    const cfg = db.config().integracoes.tribunais;
+    return Boolean(cfg?.ativo && cfg.provedor && cfg.token);
+  },
+
+  async consultarPorOAB({ oab, uf }) {
+    if (!String(oab || '').trim()) {
+      return { disponivel: false, processos: [], motivo: 'Informe o número de inscrição na OAB.' };
+    }
+    if (!this.disponivel()) {
+      return {
+        disponivel: false,
+        processos: [],
+        motivo: 'Nenhum provedor de consulta processual configurado. A busca por OAB em todos os '
+          + 'tribunais depende de serviço contratado, porque os sistemas oficiais exigem '
+          + 'certificado digital ou credencial por tribunal. Enquanto isso, importe abaixo a '
+          + 'lista que o tribunal exporta.',
+      };
+    }
+    // Ponto de extensão: requisição ao provedor contratado, com a OAB e a UF.
+    void uf;
+    return { disponivel: true, processos: [] };
+  },
+
+  /**
+   * Importa os processos localizados, descartando os baixados em definitivo e
+   * os já cadastrados. Devolve o que entrou e o que foi deixado de fora, com
+   * o motivo, para que a conferência seja possível.
+   */
+  importar(encontrados, { responsavelId = null } = {}) {
+    const existentes = new Set(db.listar('processos').map((p) => cnjDigitos(p.numeroCNJ)));
+    const importados = [];
+    const arquivados = [];
+    const duplicados = [];
+    const invalidos = [];
+
+    for (const bruto of encontrados) {
+      const numero = cnjDigitos(bruto.numeroCNJ);
+      if (numero.length !== 20) { invalidos.push(bruto); continue; }
+      if (existentes.has(numero)) { duplicados.push(bruto); continue; }
+      if (arquivadoEmDefinitivo(bruto)) { arquivados.push(bruto); continue; }
+
+      existentes.add(numero);
+      importados.push(db.inserir('processos', {
+        numeroCNJ: numero,
+        clienteId: null,
+        tribunal: bruto.tribunal || '',
+        comarca: bruto.comarca || '',
+        uf: bruto.uf || '',
+        vara: bruto.vara || '',
+        classe: bruto.classe || '',
+        assunto: bruto.assunto || '',
+        poloAtivo: bruto.poloAtivo || '',
+        poloPassivo: bruto.poloPassivo || '',
+        responsavelId,
+        status: 'ativo',
+        fase: bruto.fase || '',
+        regimePrazo: 'uteis',
+        origem: 'consulta processual',
+        // O vínculo com o cliente depende de conferência humana: a consulta
+        // devolve as partes, não diz qual delas o escritório representa.
+        pendenteVinculoCliente: true,
+      }, 'Processo importado da consulta processual'));
+    }
+
+    return { importados, arquivados, duplicados, invalidos };
+  },
+};
+
+/**
+ * Lê uma lista de processos colada ou exportada do tribunal.
+ *
+ * Aceita uma coluna com o número do processo ou linhas separadas por ponto e
+ * vírgula, tabulação ou barra vertical, na ordem número, classe, assunto,
+ * vara, tribunal e situação. Linhas sem número CNJ válido são ignoradas.
+ */
+export function interpretarListaProcessos(texto) {
+  const linhas = String(texto || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const saida = [];
+  for (const linha of linhas) {
+    const numeros = extrairNumerosCNJ(linha);
+    if (!numeros.length) continue;
+    const colunas = linha.split(/\s*[;|\t]\s*/);
+    const [, classe = '', assunto = '', vara = '', tribunal = '', situacao = ''] =
+      colunas.length > 1 ? colunas : [linha];
+    saida.push({ numeroCNJ: numeros[0], classe, assunto, vara, tribunal, situacao });
+  }
+  return saida;
+}
 
 function hashPublicacao(p) {
   const base = `${p.numeroCNJ || ''}|${p.dataPublicacao || ''}|${String(p.conteudo || '').slice(0, 200)}`;

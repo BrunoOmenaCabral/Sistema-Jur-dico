@@ -59,6 +59,7 @@ export function configuracoesPadrao() {
       whatsapp: { ativo: false, provedor: '', numero: '', token: '' },
       email: { ativo: false, remetente: '', servidor: '' },
       calendario: { ativo: false, provedor: '' },
+      tribunais: { ativo: false, provedor: '', token: '' },
     },
   };
 }

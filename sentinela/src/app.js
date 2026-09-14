@@ -5,13 +5,13 @@ import {
   enviarFila, modoAtual,
 } from './core/store.js';
 import { api } from './core/api.js';
-import { semear } from './core/seed.js';
 import { usuarioAtual, pode } from './core/auth.js';
 import { sincronizarNotificacoes } from './core/dominio.js';
 import { publicacoes as servicoPublicacoes } from './core/integracoes.js';
 import { registrar, iniciarRoteador, aoTrocarRota, renderizar } from './ui/roteador.js';
 import { montarCasca, atualizarNavegacao, atualizarContadorNotificacoes } from './ui/casca.js';
 import { telaLogin } from './views/login.js';
+import { abrirPrimeiroAcesso } from './views/primeiro-acesso.js';
 import { aviso } from './ui/ui.js';
 
 import { dashboard } from './views/dashboard.js';
@@ -85,7 +85,9 @@ async function iniciar() {
     return;
   }
 
-  await semear();
+  // Nenhuma base de demonstração é criada automaticamente: quem cria a conta
+  // recebe o sistema vazio e faz os próprios cadastros. A demonstração
+  // continua disponível, sob solicitação, em Configurações.
   if (!sessao.obter() || !usuarioAtual()) {
     telaLogin(abrirAplicacao);
     return;
@@ -93,11 +95,15 @@ async function iniciar() {
   abrirAplicacao();
 }
 
-function abrirAplicacao() {
+function abrirAplicacao({ novaConta = false } = {}) {
   const alvo = montarCasca();
   registrarTelas();
   aoTrocarRota(() => { atualizarNavegacao(); atualizarContadorNotificacoes(); });
   iniciarRoteador(alvo);
+
+  // Conta recém-criada entra no sistema vazio: o assistente oferece trazer os
+  // processos ativos antes de qualquer cadastro manual.
+  if (novaConta) abrirPrimeiroAcesso(() => renderizar(alvo));
 
   rotinaDiaria();
   // Reavalia alertas periodicamente enquanto a aba permanece aberta.
