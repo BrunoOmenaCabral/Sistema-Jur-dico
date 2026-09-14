@@ -1,2 +1,2 @@
-# Sistema-Jur-dico
+# Sistema-Juridico
 Sistema jurídico para advogados
