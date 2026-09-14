@@ -1,0 +1,53 @@
+# Publica a interface do Sentinela no GitHub Pages.
+#
+# Só a pasta sentinela/ vai para o site, então a aplicação abre direto na raiz
+# do endereço. Sem backend respondendo em /api, a interface entra em modo local
+# e guarda os dados no navegador de quem usa.
+
+name: Publicar Sentinela
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sentinela/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Uma publicação por vez, sem cancelar a que já está em andamento.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.publicacao.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Nada vai ao ar com as regras de prazo quebradas.
+      - name: Conferir as regras de prazo
+        run: node sentinela/testes/testes.mjs
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: sentinela
+
+      - id: publicacao
+        uses: actions/deploy-pages@v4

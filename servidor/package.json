@@ -1,0 +1,12 @@
+{
+  "name": "sentinela-servidor",
+  "version": "1.0.0",
+  "description": "Backend do Sentinela: API e servidor da aplicação, sem dependências externas",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/principal.js",
+    "test": "node testes/testes.mjs"
+  }
+}
