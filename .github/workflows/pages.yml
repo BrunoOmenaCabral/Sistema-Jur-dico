@@ -41,9 +41,10 @@ jobs:
       - name: Conferir as regras de prazo
         run: node sentinela/testes/testes.mjs
 
+      # O site do Pages é criado uma única vez em Settings → Pages, com
+      # Source em GitHub Actions. O token do fluxo não tem permissão para
+      # criar, apenas para publicar.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
