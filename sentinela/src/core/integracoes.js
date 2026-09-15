@@ -426,6 +426,11 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
   let consultadas = 0;
   const decisorios = movimentos.filter(ehAtoDecisorio).length;
 
+  if (!decisorios && movimentos.length) {
+    motivoTeor = 'Nenhum dos movimentos recebidos é ato decisório: são andamentos como juntada, '
+      + 'conclusão e expedição de documento, que não têm teor a publicar.';
+  }
+
   if (decisorios) {
     const locais = db.listar('publicacoes', { processoId }).map((pub) => ({
       data_disponibilizacao: pub.dataDisponibilizacao || pub.dataPublicacao,

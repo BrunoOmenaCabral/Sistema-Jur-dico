@@ -895,11 +895,29 @@ console.log('\nTeor dos atos decisórios');
 const { ehAtoDecisorio } = await import('../src/core/datajud.js');
 const { acoplarTeor } = await import('../src/core/integracoes.js');
 
-teste('distingue ato decisório de andamento comum', () => {
-  for (const n of ['Despacho', 'Decisão', 'Sentença', 'Acórdão', 'Julgamento', 'Homologação']) {
+// Pares código/nome levantados dos movimentos reais devolvidos pelo DataJud.
+teste('reconhece os atos decisórios pelo código da tabela do CNJ', () => {
+  for (const [codigo, nome] of [[11010, 'Mero expediente'], [12164, 'Outras Decisões'],
+    [3, 'Decisão'], [219, 'Procedência'], [220, 'Improcedência'], [221, 'Procedência em Parte'],
+    [239, 'Não-Provimento'], [237, 'Provimento'], [466, 'Homologação de Transação'],
+    [12185, 'Decisão Interlocutória de Mérito'], [785, 'Antecipação de tutela'],
+    [200, 'Não-Acolhimento de Embargos de Declaração'], [454, 'Indeferimento da petição inicial']]) {
+    assert.equal(ehAtoDecisorio({ codigo, nome }), true, `${codigo} ${nome}`);
+  }
+});
+teste('não confunde andamento com decisão, ainda que o nome sugira', () => {
+  for (const [codigo, nome] of [[848, 'Trânsito em julgado'], [898, 'Por decisão judicial'],
+    [12750, 'de Instrução e Julgamento'], [272, 'A depender do julgamento de outra causa'],
+    [11385, 'Execução/Cumprimento de Sentença Iniciada (o)'], [4038, 'Expedição de documento'],
+    [85, 'Petição'], [51, 'Conclusão'], [26, 'Distribuição'], [1051, 'Decurso de Prazo']]) {
+    assert.equal(ehAtoDecisorio({ codigo, nome }), false, `${codigo} ${nome}`);
+  }
+});
+teste('sem código conhecido, o nome decide', () => {
+  for (const n of ['Sentença', 'Despacho', 'Acórdão', 'Decisões diversas']) {
     assert.equal(ehAtoDecisorio({ nome: n }), true, n);
   }
-  for (const n of ['Juntada', 'Distribuição', 'Conclusão', 'Audiência', 'Documento']) {
+  for (const n of ['Juntada', 'Distribuição', 'Remessa']) {
     assert.equal(ehAtoDecisorio({ nome: n }), false, n);
   }
 });
@@ -1034,6 +1052,32 @@ teste('falha de comunicação com o diário não é confundida com ausência de 
 });
 teste('a importação dos movimentos ocorre ainda que o teor falhe', () => {
   assert.equal(diarioMudo.importados, 1);
+});
+
+console.log('\nRelato quando não há ato decisório');
+
+const fetchSemDecisao = globalThis.fetch;
+const processoSemDecisao = db.inserir('processos', {
+  numeroCNJ: cnjValido(902), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+});
+globalThis.fetch = async () => ({
+  ok: true, status: 200, text: async () => '{}',
+  json: async () => ({ hits: { hits: [{ _source: {
+    numeroProcesso: cnjValido(902), tribunal: 'TJPE',
+    dataHoraUltimaAtualizacao: '2026-09-10T10:00:00.000Z',
+    movimentos: [
+      { codigo: 26, nome: 'Distribuição', dataHora: '2026-01-15T09:00:00.000Z' },
+      { codigo: 85, nome: 'Petição', dataHora: '2026-02-01T09:00:00.000Z' },
+    ],
+  } }] } }),
+});
+const soAndamento = await atualizar2(processoSemDecisao.id);
+globalThis.fetch = fetchSemDecisao;
+
+teste('processo só com andamento explica a ausência de teor', () => {
+  assert.equal(soAndamento.importados, 2);
+  assert.equal(soAndamento.decisorios, 0);
+  assert.match(soAndamento.motivoTeor, /ato decisório/i);
 });
 
 console.log(`\n${passou} verificações concluídas.`);

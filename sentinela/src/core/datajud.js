@@ -173,16 +173,67 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
 const falha = (motivo) => ({ ok: false, motivo, processo: null, movimentos: [], indice: null });
 
 /**
- * Atos que carregam conteúdo decisório e por isso merecem ter o teor buscado.
+ * Atos com conteúdo decisório, que por isso merecem ter o teor buscado.
  *
- * A classificação usa o nome do movimento, que vem da tabela processual
- * unificada do CNJ e é a mesma em todos os tribunais. Juntada, distribuição e
- * conclusão não entram: são andamento, não decisão.
+ * A classificação é por código da tabela processual unificada do CNJ, e não
+ * pelo nome. Os nomes da tabela são curtos e hierárquicos — despacho aparece
+ * como "Mero expediente", sentença de procedência como "Procedência" — e
+ * isolados dizem pouco. Os códigos abaixo foram levantados percorrendo os
+ * movimentos reais que o DataJud devolve, em doze tribunais.
+ */
+const CODIGOS_DECISORIOS = new Set([
+  3,          // Decisão
+  11010,      // Mero expediente (despacho)
+  12164,      // Outras decisões
+  12185,      // Decisão interlocutória de mérito
+  12387,      // Decisão de saneamento e organização
+  193, 266, 11022,               // Julgamento, inclusive em diligência
+  219, 220, 221, 11406,          // Procedência, improcedência e parcial
+  385, 456, 460, 196,            // Extinção, com e sem resolução de mérito
+  237, 238, 239, 972,            // Provimento e não-provimento
+  198, 200, 871, 15162, 15164,   // Embargos de declaração
+  14232, 14233, 15062, 15064,    // Acolhimento e não-acolhimento
+  332, 785, 889,                 // Antecipação de tutela
+  339, 792, 892, 12359,          // Liminar
+  378, 466, 12733, 14099,        // Homologação
+  454, 12444, 12455, 15086,      // Deferimento e indeferimento
+  11373, 12253, 12254,           // Anulação e desconstituição de sentença
+  12258,      // Juízo de retratação
+  1063,       // Determinação de arquivamento
+  11377, 973, 12320, 12735,      // Inadmissibilidade, punibilidade, denegação
+]);
+
+/**
+ * Códigos cujo nome sugere decisão sem que o movimento seja um ato decisório.
+ * Constam aqui para que a reserva por nome não os capture.
+ */
+const CODIGOS_NAO_DECISORIOS = new Set([
+  848,        // Trânsito em julgado
+  898,        // Por decisão judicial (motivo de suspensão)
+  272,        // A depender do julgamento de outra causa
+  277, 377,   // Convenção e acordo entre as partes
+  11385,      // Execução/cumprimento de sentença iniciada
+  12098, 12099, 12100, 14985,    // Incidente de resolução de demandas repetitivas
+  12115, 12116,                  // Para julgamento de mérito (conclusão)
+  12749, 12750, 12751, 12753,    // Tipos de audiência e preliminar
+]);
+
+// Reserva para tribunal que use código fora da tabela conhecida.
+const NOME_DECISORIO =
+  /despacho|decis[ãa]|decis[õo]es|senten[çc]|ac[óo]rd[ãa]|julgad|julgament|homologa|liminar|tutela|proced[êe]nc|improced|provimento|acolhimento|deferimento|indeferimento|mero expediente|saneamento/i;
+
+/**
+ * @param {object} movimento — do DataJud (`nome`, `codigo`) ou já convertido
+ *   em registro da linha do tempo (`titulo`, `codigo`).
  */
 export function ehAtoDecisorio(movimento) {
-  const nome = String(movimento?.nome || movimento?.titulo || '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  return /despacho|decisao|sentenca|acordao|julgamento|homologa|liminar|tutela/.test(nome);
+  const codigo = Number(movimento?.codigo);
+  if (Number.isFinite(codigo)) {
+    if (CODIGOS_DECISORIOS.has(codigo)) return true;
+    if (CODIGOS_NAO_DECISORIOS.has(codigo)) return false;
+  }
+  const nome = String(movimento?.nome || movimento?.titulo || '');
+  return NOME_DECISORIO.test(nome);
 }
 
 /**
@@ -197,6 +248,7 @@ export function movimentoComoRegistro(movimento, processo = {}) {
   return {
     data: soData(movimento.dataHora),
     titulo: movimento.nome || 'Movimentação',
+    codigo: movimento.codigo ?? null,
     descricao: complementos.join(' · '),
     origem: 'andamento processual',
     // Identifica o movimento na origem, para não importar o mesmo duas vezes.

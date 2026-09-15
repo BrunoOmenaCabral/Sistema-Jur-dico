@@ -456,42 +456,29 @@ export function abrirArquivamento(processo, aoConcluir) {
  * deixar prazo apontando para processo inexistente, e tudo permanece
  * recuperável na lixeira, em Configurações.
  */
-export function abrirExclusao(processo, aoConcluir) {
+export async function abrirExclusao(processo, aoConcluir) {
   const { contagem, total, prazosAbertos } = dependenciasDoProcesso(processo.id);
 
-  const avisos = [];
-  if (total) {
-    avisos.push(`<div class="aviso aviso--atencao">Serão excluídos junto: ${esc(descreverVinculos(contagem))}.</div>`);
-  }
+  const partes = [`Excluir o processo ${fmtCNJ(processo.numeroCNJ)}?`];
+  if (total) partes.push(`Saem junto: ${descreverVinculos(contagem)}.`);
   if (prazosAbertos) {
-    avisos.push(`<div class="aviso aviso--alerta">Atenção: ${prazosAbertos} prazo(s) em aberto.
-      Se o processo apenas terminou, arquive em vez de excluir.</div>`);
+    partes.push(`Atenção: ${prazosAbertos} prazo(s) em aberto. `
+      + 'Se o processo apenas terminou, o caminho é arquivar, não excluir.');
   }
-  avisos.push(`<div class="aviso aviso--info">A exclusão é lógica: tudo permanece recuperável
-    na lixeira, em Configurações.</div>`);
+  partes.push('A exclusão é lógica: tudo permanece recuperável na lixeira, em Configurações.');
 
-  modalFormulario({
-    titulo: `Excluir processo ${fmtCNJ(processo.numeroCNJ)}`,
-    largo: true,
-    campos: [
-      { nome: 'motivo', rotulo: 'Motivo da exclusão', tipo: 'textarea', obrigatorio: true, largura: 3,
-        ajuda: 'Registrado na auditoria, com identificação de quem excluiu.' },
-      { nome: 'confirmacao', rotulo: 'Digite EXCLUIR para confirmar', tipo: 'text', obrigatorio: true, largura: 2 },
-    ],
-    rotuloSalvar: 'Excluir processo',
-    extras: avisos.join(''),
-    aoSalvar: ({ motivo, confirmacao }, ctx) => {
-      if (String(confirmacao).trim().toUpperCase() !== 'EXCLUIR') {
-        ctx.avisos.innerHTML = '<div class="aviso aviso--alerta">Digite EXCLUIR para confirmar.</div>';
-        return false;
-      }
-      const r = excluirProcesso(processo.id, motivo);
-      aviso(`Processo excluído${r.total ? ` com ${r.total} registro(s) vinculado(s)` : ''}. `
-        + 'Recuperável na lixeira.', 'atencao');
-      aoConcluir?.();
-      return true;
-    },
+  const ok = await confirmar({
+    titulo: 'Excluir processo',
+    mensagem: partes.join(' '),
+    rotuloOk: 'Sim, excluir',
+    perigo: true,
   });
+  if (!ok) return;
+
+  const r = excluirProcesso(processo.id, 'Exclusão solicitada na tela de processos');
+  aviso(`Processo excluído${r.total ? ` com ${r.total} registro(s) vinculado(s)` : ''}. `
+    + 'Recuperável na lixeira.', 'atencao');
+  aoConcluir?.();
 }
 
 /* ------------------------------------- movimentos vindos do tribunal ----- */
@@ -541,8 +528,8 @@ export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
           qs('#dj-resultado', corpo).innerHTML = `
             <div class="aviso aviso--ok">${r.importados} movimento(s) acrescentado(s) à linha do tempo.</div>
             <div class="mini mudo">${r.total} movimento(s) no tribunal · ${r.repetidos} já constavam.</div>
-            ${r.decisorios ? `<div class="mini mudo">${r.decisorios} ato(s) decisório(s) ·
-              ${r.comTeor} com o teor recuperado do diário oficial.</div>` : ''}
+            ${r.total ? `<div class="mini mudo">${r.decisorios} ato(s) decisório(s)${r.decisorios
+    ? ` · ${r.comTeor} com o teor recuperado do diário oficial` : ''}.</div>` : ''}
             ${r.motivoTeor ? `<div class="aviso aviso--atencao quebra">${esc(r.motivoTeor)}</div>` : ''}
             ${r.complementados.length
     ? `<div class="mini mudo">Capa complementada: ${esc(r.complementados.join(', '))}.</div>` : ''}
