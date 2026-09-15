@@ -15,7 +15,7 @@
 //    autorizar a origem. Havendo backend próprio, a consulta passa por ele.
 
 import { db, modoAtual } from './store.js';
-import { ponteDisponivel } from './ponte.js';
+import { ponteDisponivel, regiaoDaPonte } from './ponte.js';
 import { cnjDigitos, fmtCNJ, iso, hoje, addDays } from './util.js';
 
 export const BASE_PADRAO = 'https://comunicaapi.pje.jus.br/api/v1';
@@ -97,8 +97,14 @@ async function requisitar(parametros, sinal) {
   }
 
   if (resposta.status === 403) {
-    return falha('O serviço do CNJ recusou a consulta (403). Ele responde apenas a acessos '
-      + 'originados do Brasil. Verifique se não há VPN ou proxy no caminho.');
+    const onde = (await resposta.json().catch(() => null))?.regiao || regiaoDaPonte();
+    return falha('O serviço do CNJ recusou a consulta (403): ele atende apenas acesso originado '
+      + 'do Brasil. '
+      + (onde
+        ? `A consulta partiu da região ${onde}. `
+          + (onde.startsWith('gru') ? 'A região está no Brasil, então o motivo é outro.'
+            : 'Configure a hospedagem para executar em São Paulo (gru1).')
+        : 'Verifique de onde a hospedagem executa a consulta.'));
   }
   if (!resposta.ok) {
     // O repasse devolve o status e o texto que vieram do CNJ. Mostrar o status

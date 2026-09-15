@@ -41,6 +41,7 @@ module.exports = async (req, res) => {
         status: externa.status,
         erro: `O serviço do CNJ respondeu ${externa.status}.`,
         origem: externa.status,
+        regiao: process.env.VERCEL_REGION || null,
         consulta: parametros.toString(),
         detalhe: texto.slice(0, 400),
       };
@@ -48,7 +49,7 @@ module.exports = async (req, res) => {
       if (externa.status < 500) break;
     } catch (e) {
       ultima = { status: 504, erro: `Consulta ao CNJ não concluída: ${e.message}`,
-        consulta: parametros.toString() };
+        regiao: process.env.VERCEL_REGION || null, consulta: parametros.toString() };
     }
   }
 

@@ -9,9 +9,12 @@
 // explicam o motivo em vez de falhar em silêncio.
 
 let estado = null;
+let regiao = null;
 
 export const pontePronta = () => estado !== null;
 export const ponteDisponivel = () => estado === true;
+/** Região em que a ponte executa. O CNJ só atende requisição vinda do Brasil. */
+export const regiaoDaPonte = () => regiao;
 
 /** Pergunta à origem se há repasse disponível. Nunca lança. */
 export async function detectarPonte({ tempoLimite = 4000 } = {}) {
@@ -21,7 +24,9 @@ export async function detectarPonte({ tempoLimite = 4000 } = {}) {
     const corte = setTimeout(() => controle.abort(), tempoLimite);
     const r = await fetch('/api/ponte', { signal: controle.signal, cache: 'no-store' });
     clearTimeout(corte);
-    estado = r.ok && (await r.json())?.ok === true;
+    const corpo = r.ok ? await r.json().catch(() => null) : null;
+    estado = corpo?.ok === true;
+    regiao = corpo?.regiao || null;
   } catch {
     estado = false;
   }
@@ -29,4 +34,7 @@ export async function detectarPonte({ tempoLimite = 4000 } = {}) {
 }
 
 /** Usado apenas pelos testes, para exercitar os dois cenários. */
-export function definirPonte(valor) { estado = valor; }
+export function definirPonte(valor, regiaoInformada = null) {
+  estado = valor;
+  regiao = regiaoInformada;
+}

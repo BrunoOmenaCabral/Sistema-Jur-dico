@@ -792,7 +792,8 @@ const { baseEmUso: baseDJEN, BASE_PADRAO: BASE_DJEN } = await import('../src/cor
 const fetchPonte = globalThis.fetch;
 
 definirPonte(null);
-globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, servicos: ['datajud'] }) });
+globalThis.fetch = async () => ({ ok: true,
+  json: async () => ({ ok: true, servicos: ['datajud'], regiao: 'gru1' }) });
 const comPonte = await detectarPonte();
 const baseComPonte = { datajud: baseDataJud(), djen: baseDJEN() };
 
@@ -1210,6 +1211,38 @@ teste('terceira consulta não duplica nem reescreve o teor', () => {
 teste('o teor recuperado passa a alimentar o relatório', () => {
   const v = novidadesDoProcesso(processoDuasFases.id, { desde: '2026-01-01' });
   assert.match(v.texto, /julgado procedente/);
+});
+
+console.log('\nRegião de onde a consulta parte');
+
+const { regiaoDaPonte } = await import('../src/core/ponte.js');
+const fetchRegiao = globalThis.fetch;
+
+definirPonte(true, 'iad1');
+globalThis.fetch = async () => ({ ok: false, status: 403,
+  json: async () => ({ regiao: 'iad1' }), text: async () => '' });
+const bloqueadoForaDoBrasil = await consultarPorOAB({ numeroOab: '12345', ufOab: 'PE' });
+
+definirPonte(true, 'gru1');
+globalThis.fetch = async () => ({ ok: false, status: 403,
+  json: async () => ({ regiao: 'gru1' }), text: async () => '' });
+const bloqueadoNoBrasil = await consultarPorOAB({ numeroOab: '12345', ufOab: 'PE' });
+globalThis.fetch = fetchRegiao;
+definirPonte(false);
+
+teste('403 fora do Brasil indica o ajuste da região', () => {
+  assert.match(bloqueadoForaDoBrasil.motivo, /iad1/);
+  assert.match(bloqueadoForaDoBrasil.motivo, /gru1/);
+});
+teste('403 vindo do Brasil não sugere ajuste inútil', () => {
+  assert.match(bloqueadoNoBrasil.motivo, /gru1/);
+  assert.match(bloqueadoNoBrasil.motivo, /o motivo é outro/);
+});
+teste('a sonda guarda a região informada pela ponte', () => {
+  definirPonte(true, 'gru1');
+  assert.equal(regiaoDaPonte(), 'gru1');
+  definirPonte(false);
+  assert.equal(regiaoDaPonte(), null);
 });
 
 console.log(`\n${passou} verificações concluídas.`);
