@@ -246,10 +246,12 @@ export function abrirFormularioCliente(valores = {}, aoConcluir) {
         ctx.avisos.innerHTML = `<div class="aviso aviso--atencao">⚠️ Já existe cliente com este documento: ${esc(duplicado.nome)}.</div>`;
         if (!ctx.form.dataset.confirmado) { ctx.form.dataset.confirmado = '1'; return false; }
       }
-      if (edicao) db.atualizar('clientes', valores.id, dados, 'Cliente alterado');
-      else db.inserir('clientes', dados, 'Cliente cadastrado');
+      const registro = edicao
+        ? db.atualizar('clientes', valores.id, dados, 'Cliente alterado')
+        : db.inserir('clientes', dados, 'Cliente cadastrado');
       aviso('Cliente salvo.', 'ok');
-      aoConcluir?.();
+      // Quem abriu o formulário recebe o registro, para já vinculá-lo.
+      aoConcluir?.(registro);
     },
   });
 }

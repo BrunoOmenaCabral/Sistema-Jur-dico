@@ -421,3 +421,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .visualizador--centro img, .visualizador--centro video { max-width: 100%; max-height: 100%; border-radius: var(--r-sm); }
 .visualizador--texto { height: min(70vh, 640px); overflow: auto; padding: .8rem; margin: 0;
   font-size: .82rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+
+/* Atalho de cadastro dentro de outro formulário --------------------------- */
+.atalho-cadastro { margin-top: .35rem; align-self: flex-start; }

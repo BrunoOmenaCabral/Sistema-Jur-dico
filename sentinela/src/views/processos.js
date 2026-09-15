@@ -3,12 +3,14 @@
 
 import { h, qs, esc, delegar, aviso, confirmar, modal } from '../ui/ui.js';
 import { modalFormulario } from '../ui/formulario.js';
-import { cabecalhoPagina, opcoesClientes, opcoesUsuarios, listaEventos } from '../ui/componentes.js';
+import { cabecalhoPagina, opcoesClientes, opcoesUsuarios, listaEventos,
+  atalhoDeCadastro } from '../ui/componentes.js';
 import { db } from '../core/store.js';
 import { pode } from '../core/auth.js';
 import {
   processoPorNumero, linhaDoTempo, nomeCliente, nomeUsuario, enriquecerPrazo,
   FASES_PROCESSO, STATUS_PROCESSO, situacaoPrazo,
+  dependenciasDoProcesso, arquivarProcesso, reativarProcesso, excluirProcesso,
 } from '../core/dominio.js';
 import { fmtCNJ, validarCNJ, cnjDigitos, fmtData, fmtMoeda, norm, hoje } from '../core/util.js';
 import { ir, recarregar } from '../ui/roteador.js';
@@ -18,6 +20,7 @@ import { abrirFormularioTarefa } from './tarefas.js';
 import { abrirFormularioAudiencia } from './audiencias.js';
 import { abrirFormularioDocumento } from './documentos.js';
 import { abrirConsultaProcessual } from './primeiro-acesso.js';
+import { abrirFormularioCliente } from './clientes.js';
 
 let filtroProc = { status: 'ativo', busca: '', responsavelId: '' };
 
@@ -53,7 +56,7 @@ export function processos({ params }) {
     }
     qs('#lista', tela).innerHTML = lista.length ? `<table class="tabela">
       <thead><tr><th>Número</th><th>Cliente</th><th>Parte contrária</th><th>Vara/Tribunal</th>
-      <th>Fase</th><th>Prazos</th><th>Status</th></tr></thead>
+      <th>Fase</th><th>Prazos</th><th>Status</th><th></th></tr></thead>
       <tbody>${lista.map((p) => {
       const abertos = db.listar('prazos', { processoId: p.id })
         .filter((x) => ['pendente', 'andamento'].includes(x.status));
@@ -66,6 +69,14 @@ export function processos({ params }) {
           <td>${esc(p.fase || '—')}</td>
           <td>${abertos.length ? `<span class="selo ${critico ? 'selo--fatal' : 'selo--proximo'}">${abertos.length}</span>` : '—'}</td>
           <td><span class="selo selo--${p.status === 'ativo' ? 'ok' : 'neutro'}">${esc(p.status)}</span></td>
+          <td class="linha" data-sem-navegacao>
+            ${['arquivado', 'encerrado'].includes(p.status)
+    ? `<button class="btn btn--pequeno" data-reativar="${p.id}">Reabrir</button>`
+    : (pode('processos:editar')
+      ? `<button class="btn btn--pequeno" data-arquivar="${p.id}">Arquivar</button>` : '')}
+            ${pode('processos:excluir')
+    ? `<button class="btn btn--pequeno btn--perigo" data-excluir="${p.id}">Excluir</button>` : ''}
+          </td>
         </tr>`;
     }).join('')}</tbody></table>`
       : '<div class="vazio"><span class="ico">📁</span>Nenhum processo encontrado.</div>';
@@ -73,7 +84,25 @@ export function processos({ params }) {
 
   delegar(tela, 'change', '[data-filtro]', (_e, el) => { filtroProc[el.dataset.filtro] = el.value; desenhar(); });
   delegar(tela, 'input', 'input[data-filtro]', (_e, el) => { filtroProc[el.dataset.filtro] = el.value; desenhar(); });
-  delegar(tela, 'click', 'tbody tr', (_e, el) => ir(`processos/${el.dataset.id}`));
+  delegar(tela, 'click', 'tbody tr', (ev, el) => {
+    if (ev.target.closest('[data-sem-navegacao]')) return;
+    ir(`processos/${el.dataset.id}`);
+  });
+  delegar(tela, 'click', '[data-arquivar]', (_ev, el) => {
+    abrirArquivamento(db.obter('processos', el.dataset.arquivar), desenhar);
+  });
+  delegar(tela, 'click', '[data-excluir]', (_ev, el) => {
+    abrirExclusao(db.obter('processos', el.dataset.excluir), desenhar);
+  });
+  delegar(tela, 'click', '[data-reativar]', async (_ev, el) => {
+    const ok = await confirmar({ titulo: 'Reabrir processo',
+      mensagem: 'O processo volta à situação ativa. Os prazos cancelados no arquivamento não '
+        + 'são restaurados automaticamente. Confirma?', rotuloOk: 'Reabrir' });
+    if (!ok) return;
+    reativarProcesso(el.dataset.reativar);
+    aviso('Processo reaberto.', 'ok');
+    desenhar();
+  });
   delegar(tela, 'click', '[data-acao="novo"]', () => abrirFormularioProcesso({}, desenhar));
   delegar(tela, 'click', '[data-acao="consultar"]', () => abrirConsultaProcessual(desenhar));
   qs('[data-filtro="status"]', tela).value = filtroProc.status;
@@ -102,7 +131,11 @@ export function fichaProcesso(id) {
       <button class="btn" data-acao="audiencia">Nova audiência</button>
       <button class="btn" data-acao="documento">Anexar documento</button>
       <button class="btn" data-acao="movimentacao">Registrar movimentação</button>
-      <button class="btn" data-acao="editar">Editar</button>`,
+      <button class="btn" data-acao="editar">Editar</button>
+      ${['arquivado', 'encerrado'].includes(p.status)
+    ? '<button class="btn" data-acao="reativar">Reabrir</button>'
+    : (pode('processos:editar') ? '<button class="btn" data-acao="arquivar">Arquivar</button>' : '')}
+      ${pode('processos:excluir') ? '<button class="btn btn--perigo" data-acao="excluir">Excluir</button>' : ''}`,
     `${p.classe || ''} · ${p.assunto || ''}`)}
 
     <div class="grade grade--2" style="margin-bottom:.8rem">
@@ -201,6 +234,20 @@ export function fichaProcesso(id) {
   delegar(tela, 'click', '[data-acao="audiencia"]', () => abrirFormularioAudiencia({ processoId: id, clienteId: p.clienteId }, () => recarregar()));
   delegar(tela, 'click', '[data-acao="documento"]', () => abrirFormularioDocumento({ processoId: id, clienteId: p.clienteId }, () => recarregar()));
   delegar(tela, 'click', '[data-acao="editar"]', () => abrirFormularioProcesso(p, () => recarregar()));
+  delegar(tela, 'click', '[data-acao="arquivar"]', () => abrirArquivamento(p, () => recarregar()));
+  delegar(tela, 'click', '[data-acao="reativar"]', async () => {
+    const ok = await confirmar({
+      titulo: 'Reabrir processo',
+      mensagem: 'O processo volta à situação ativa e reaparece nas listagens. Os prazos '
+        + 'cancelados no arquivamento não são restaurados automaticamente. Confirma?',
+      rotuloOk: 'Reabrir',
+    });
+    if (!ok) return;
+    reativarProcesso(id);
+    aviso('Processo reaberto.', 'ok');
+    recarregar();
+  });
+  delegar(tela, 'click', '[data-acao="excluir"]', () => abrirExclusao(p, () => ir('processos')));
   delegar(tela, 'click', '[data-acao="movimentacao"]', () =>
     abrirFormularioMovimentacao({ processoId: id }, () => recarregar()));
   delegar(tela, 'click', '[data-editar-mov]', (_e, el) =>
@@ -289,7 +336,7 @@ export function abrirFormularioProcesso(valores = {}, aoConcluir) {
   const edicao = Boolean(valores.id);
   let confirmadoDV = false;
 
-  modalFormulario({
+  const ref = modalFormulario({
     titulo: edicao ? 'Editar processo' : 'Novo processo',
     campos, largo: true,
     valores: { status: 'ativo', regimePrazo: 'uteis', ...valores },
@@ -314,6 +361,122 @@ export function abrirFormularioProcesso(valores = {}, aoConcluir) {
       if (edicao) db.atualizar('processos', valores.id, registro, 'Processo alterado');
       else db.inserir('processos', registro, 'Processo cadastrado');
       aviso(edicao ? 'Processo atualizado.' : 'Processo cadastrado.', 'ok');
+      aoConcluir?.();
+      return true;
+    },
+  });
+
+  // O cliente pode não estar cadastrado ainda. Em vez de obrigar a sair do
+  // processo pela metade, o cadastro abre aqui e já volta escolhido.
+  atalhoDeCadastro(ref.form, 'clienteId', {
+    rotulo: '+ Cadastrar cliente',
+    abrir: (aoCriar) => abrirFormularioCliente({}, aoCriar),
+  });
+
+  return ref;
+}
+
+/* ----------------------------------------- arquivamento e exclusão ------- */
+
+const ROTULOS_VINCULO = {
+  prazos: 'prazo', tarefas: 'tarefa', audiencias: 'audiência', publicacoes: 'publicação',
+  documentos: 'documento', comunicacoes: 'comunicação', financeiro: 'lançamento financeiro',
+  movimentacoes: 'movimentação',
+};
+
+/** Descreve em palavras o que está pendurado no processo. */
+function descreverVinculos(contagem) {
+  return Object.entries(contagem)
+    .map(([colecao, n]) => `${n} ${ROTULOS_VINCULO[colecao] || colecao}${n > 1 ? 's' : ''}`)
+    .join(', ');
+}
+
+/**
+ * Arquivamento do processo encerrado.
+ *
+ * O histórico permanece inteiro. Os prazos ainda em aberto são cancelados,
+ * porque prazo de processo arquivado seguiria disparando alerta sem ter o que
+ * cobrar, e o sistema existe justamente para que alerta signifique alguma coisa.
+ */
+export function abrirArquivamento(processo, aoConcluir) {
+  const { prazosAbertos, audienciasFuturas } = dependenciasDoProcesso(processo.id);
+
+  const alerta = [];
+  if (prazosAbertos) {
+    alerta.push(`<div class="aviso aviso--atencao">${prazosAbertos} prazo(s) em aberto neste
+      processo serão cancelados no arquivamento.</div>`);
+  }
+  if (audienciasFuturas) {
+    alerta.push(`<div class="aviso aviso--atencao">Há ${audienciasFuturas} audiência(s) ainda
+      por realizar. Confirme se o processo está mesmo encerrado.</div>`);
+  }
+
+  modalFormulario({
+    titulo: 'Arquivar processo',
+    largo: true,
+    campos: [
+      { nome: 'status', rotulo: 'Situação', tipo: 'select', vazio: false,
+        opcoes: [
+          { valor: 'arquivado', rotulo: 'Arquivado' },
+          { valor: 'encerrado', rotulo: 'Encerrado' },
+          { valor: 'suspenso', rotulo: 'Suspenso' },
+        ] },
+      { nome: 'data', rotulo: 'Data', tipo: 'date', obrigatorio: true, largura: 2 },
+      { nome: 'motivo', rotulo: 'Motivo', tipo: 'textarea', largura: 3,
+        ajuda: 'Ex.: sentença transitada em julgado, acordo cumprido, desistência homologada.' },
+    ],
+    valores: { status: 'arquivado', data: hoje() },
+    rotuloSalvar: 'Arquivar',
+    extras: alerta.join('') || undefined,
+    aoSalvar: ({ status, data, motivo }) => {
+      const r = arquivarProcesso(processo.id, { status, data, motivo });
+      aviso(`Processo ${status}.`
+        + (r.prazosCancelados ? ` ${r.prazosCancelados} prazo(s) cancelado(s).` : ''), 'ok');
+      aoConcluir?.();
+    },
+  });
+}
+
+/**
+ * Exclusão do cadastro equivocado.
+ *
+ * Só se justifica quando o processo não deveria existir. Para o que terminou,
+ * o caminho é arquivar. A exclusão é lógica e leva os vínculos junto, para não
+ * deixar prazo apontando para processo inexistente, e tudo permanece
+ * recuperável na lixeira, em Configurações.
+ */
+export function abrirExclusao(processo, aoConcluir) {
+  const { contagem, total, prazosAbertos } = dependenciasDoProcesso(processo.id);
+
+  const avisos = [];
+  if (total) {
+    avisos.push(`<div class="aviso aviso--atencao">Serão excluídos junto: ${esc(descreverVinculos(contagem))}.</div>`);
+  }
+  if (prazosAbertos) {
+    avisos.push(`<div class="aviso aviso--alerta">Atenção: ${prazosAbertos} prazo(s) em aberto.
+      Se o processo apenas terminou, arquive em vez de excluir.</div>`);
+  }
+  avisos.push(`<div class="aviso aviso--info">A exclusão é lógica: tudo permanece recuperável
+    na lixeira, em Configurações.</div>`);
+
+  modalFormulario({
+    titulo: `Excluir processo ${fmtCNJ(processo.numeroCNJ)}`,
+    largo: true,
+    campos: [
+      { nome: 'motivo', rotulo: 'Motivo da exclusão', tipo: 'textarea', obrigatorio: true, largura: 3,
+        ajuda: 'Registrado na auditoria, com identificação de quem excluiu.' },
+      { nome: 'confirmacao', rotulo: 'Digite EXCLUIR para confirmar', tipo: 'text', obrigatorio: true, largura: 2 },
+    ],
+    rotuloSalvar: 'Excluir processo',
+    extras: avisos.join(''),
+    aoSalvar: ({ motivo, confirmacao }, ctx) => {
+      if (String(confirmacao).trim().toUpperCase() !== 'EXCLUIR') {
+        ctx.avisos.innerHTML = '<div class="aviso aviso--alerta">Digite EXCLUIR para confirmar.</div>';
+        return false;
+      }
+      const r = excluirProcesso(processo.id, motivo);
+      aviso(`Processo excluído${r.total ? ` com ${r.total} registro(s) vinculado(s)` : ''}. `
+        + 'Recuperável na lixeira.', 'atencao');
       aoConcluir?.();
       return true;
     },

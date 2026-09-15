@@ -293,8 +293,15 @@ export const db = {
     return lista.filter((r) => criterios.every(([k, v]) => (Array.isArray(v) ? v.includes(r[k]) : r[k] === v)));
   },
 
-  obter(colecao, id) {
-    return (carregar()[colecao] || []).find((r) => r.id === id) || null;
+  /**
+   * Registro por identificador. O excluído logicamente não é devolvido, para
+   * que nenhuma tela abra ficha de algo que saiu da operação. A lixeira, que
+   * precisa vê-lo, usa `listar` com `incluirExcluidos`.
+   */
+  obter(colecao, id, { incluirExcluidos = false } = {}) {
+    const registro = (carregar()[colecao] || []).find((r) => r.id === id) || null;
+    if (!registro) return null;
+    return !incluirExcluidos && registro.excluidoEm ? null : registro;
   },
 
   inserir(colecao, dados, detalhe) {

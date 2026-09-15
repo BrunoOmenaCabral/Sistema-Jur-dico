@@ -530,4 +530,74 @@ teste('falha de comunicação não é lida como ausência de intimação', () =>
   assert.match(bloqueada.mensagem, /403|Brasil/);
 });
 
+console.log('\nArquivamento e exclusão de processo');
+
+const { dependenciasDoProcesso, arquivarProcesso, reativarProcesso, excluirProcesso } =
+  await import('../src/core/dominio.js');
+
+const processoParaArquivar = db.inserir('processos', {
+  numeroCNJ: cnjValido(701), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+});
+db.inserir('prazos', { processoId: processoParaArquivar.id, tipo: 'manifestacao',
+  status: 'pendente', dataVencimento: addDays(hoje(), 10) });
+db.inserir('tarefas', { processoId: processoParaArquivar.id, titulo: 'Juntar procuração' });
+
+teste('conta o que está vinculado ao processo', () => {
+  const d = dependenciasDoProcesso(processoParaArquivar.id);
+  assert.equal(d.contagem.prazos, 1);
+  assert.equal(d.contagem.tarefas, 1);
+  assert.equal(d.prazosAbertos, 1);
+  assert.equal(d.total, 2);
+});
+teste('arquivar cancela os prazos em aberto e preserva o histórico', () => {
+  const r = arquivarProcesso(processoParaArquivar.id, { motivo: 'Trânsito em julgado' });
+  assert.equal(r.prazosCancelados, 1);
+  const p = db.obter('processos', processoParaArquivar.id);
+  assert.equal(p.status, 'arquivado');
+  assert.equal(p.motivoEncerramento, 'Trânsito em julgado');
+  assert.equal(db.listar('prazos', { processoId: p.id })[0].status, 'cancelado');
+  // Nada foi apagado: tarefa e prazo seguem consultáveis.
+  assert.equal(db.listar('tarefas', { processoId: p.id }).length, 1);
+});
+teste('reabrir devolve o processo à operação', () => {
+  reativarProcesso(processoParaArquivar.id);
+  const p = db.obter('processos', processoParaArquivar.id);
+  assert.equal(p.status, 'ativo');
+  assert.equal(p.motivoEncerramento, null);
+});
+
+const processoErrado = db.inserir('processos', {
+  numeroCNJ: cnjValido(702), clienteId: processo.clienteId, status: 'ativo',
+});
+db.inserir('prazos', { processoId: processoErrado.id, tipo: 'outros',
+  status: 'pendente', dataVencimento: addDays(hoje(), 5) });
+db.inserir('movimentacoes', { processoId: processoErrado.id, data: hoje(), titulo: 'Distribuição' });
+
+teste('excluir leva os vínculos junto, sem deixar prazo órfão', () => {
+  const r = excluirProcesso(processoErrado.id, 'Cadastro em duplicidade');
+  assert.equal(r.total, 2);
+  assert.equal(db.obter('processos', processoErrado.id), null);
+  assert.equal(db.listar('prazos', { processoId: processoErrado.id }).length, 0);
+  assert.equal(db.listar('movimentacoes', { processoId: processoErrado.id }).length, 0);
+});
+teste('exclusão é lógica e permanece recuperável', () => {
+  const excluidos = db.listar('processos', { incluirExcluidos: true })
+    .filter((p) => p.id === processoErrado.id);
+  assert.equal(excluidos.length, 1);
+  assert.ok(excluidos[0].excluidoEm);
+  assert.equal(excluidos[0].motivoExclusao, 'Cadastro em duplicidade');
+  db.restaurar('processos', processoErrado.id);
+  assert.ok(db.obter('processos', processoErrado.id));
+});
+teste('registro excluído não é devolvido por obter, mas continua na lixeira', () => {
+  const alvo = db.inserir('tarefas', { titulo: 'Tarefa a excluir' });
+  db.remover('tarefas', alvo.id, 'teste');
+  assert.equal(db.obter('tarefas', alvo.id), null);
+  assert.ok(db.obter('tarefas', alvo.id, { incluirExcluidos: true }));
+  assert.ok(db.listar('tarefas', { incluirExcluidos: true }).some((x) => x.id === alvo.id));
+});
+teste('excluir processo inexistente é recusado', () => {
+  assert.throws(() => excluirProcesso('nao-existe'), /não encontrado/i);
+});
+
 console.log(`\n${passou} verificações concluídas.`);

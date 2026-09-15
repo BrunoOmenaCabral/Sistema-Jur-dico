@@ -147,3 +147,26 @@ export const opcoesProcessos = () => db.listar('processos')
 
 export const opcoesUsuarios = () => db.listar('usuarios')
   .filter((u) => u.ativo !== false).map((u) => ({ valor: u.id, rotulo: u.nome }));
+
+/**
+ * Acopla um atalho de cadastro a um campo de seleção.
+ *
+ * Abre o formulário do registro que falta e, uma vez salvo, já o deixa
+ * escolhido no campo. Evita a interrupção de abandonar o cadastro em curso
+ * para ir cadastrar o que faltava em outra tela.
+ */
+export function atalhoDeCadastro(form, nomeCampo, { rotulo, abrir, nomeDe = (r) => r.nome }) {
+  const campo = form?.elements?.[nomeCampo];
+  const caixa = campo?.closest('.campo');
+  if (!campo || !caixa) return null;
+
+  const botao = h(`<button type="button" class="btn btn--pequeno atalho-cadastro">${esc(rotulo)}</button>`);
+  caixa.appendChild(botao);
+  botao.addEventListener('click', () => abrir((registro) => {
+    if (!registro?.id) return;
+    campo.add(new Option(nomeDe(registro) || registro.id, registro.id, true, true));
+    campo.value = registro.id;
+    campo.dispatchEvent(new Event('change', { bubbles: true }));
+  }));
+  return botao;
+}

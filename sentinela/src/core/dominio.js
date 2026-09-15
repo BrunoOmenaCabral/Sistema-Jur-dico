@@ -488,6 +488,87 @@ export function buscaGlobal(termo) {
 
 /* ----------------------------------------------------- ações de prazo --- */
 
+/* ------------------------------------------- encerramento de processo ---- */
+
+/** Coleções que seguem o processo quando ele é excluído. */
+const VINCULADAS = ['prazos', 'tarefas', 'audiencias', 'publicacoes', 'documentos',
+  'comunicacoes', 'financeiro', 'movimentacoes'];
+
+/**
+ * Conta o que está vinculado ao processo, para que nenhuma exclusão ou
+ * arquivamento aconteça sem que o advogado saiba o que leva junto.
+ */
+export function dependenciasDoProcesso(processoId) {
+  const contagem = {};
+  let total = 0;
+  for (const colecao of VINCULADAS) {
+    const n = db.listar(colecao, { processoId }).length;
+    if (n) { contagem[colecao] = n; total += n; }
+  }
+  const prazosAbertos = db.listar('prazos', { processoId })
+    .filter((p) => abertos.includes(p.status)).length;
+  const audienciasFuturas = db.listar('audiencias', { processoId })
+    .filter((a) => a.data >= hoje() && a.status !== 'cancelada').length;
+  return { contagem, total, prazosAbertos, audienciasFuturas };
+}
+
+/**
+ * Arquiva o processo encerrado.
+ *
+ * Nada é apagado: o histórico permanece inteiro e consultável. Os prazos que
+ * continuavam em aberto são cancelados, porque prazo de processo arquivado
+ * seguiria alertando sem ter o que cobrar. O motivo fica registrado em cada um.
+ */
+export function arquivarProcesso(id, { motivo = '', data = hoje(), status = 'arquivado' } = {}) {
+  const processo = db.obter('processos', id);
+  if (!processo) throw new Error('Processo não encontrado.');
+
+  const cancelados = [];
+  for (const prazo of db.listar('prazos', { processoId: id })) {
+    if (!abertos.includes(prazo.status)) continue;
+    db.atualizar('prazos', prazo.id, { status: 'cancelado' },
+      `Processo ${status} em ${fmtData(data)}`);
+    cancelados.push(prazo.id);
+  }
+
+  const atualizado = db.atualizar('processos', id, {
+    status,
+    dataEncerramento: data,
+    motivoEncerramento: motivo || null,
+  }, motivo ? `Processo ${status}: ${motivo}` : `Processo ${status}`);
+
+  return { processo: atualizado, prazosCancelados: cancelados.length };
+}
+
+/** Devolve o processo arquivado à operação. Os prazos cancelados não voltam sozinhos. */
+export function reativarProcesso(id) {
+  return db.atualizar('processos', id,
+    { status: 'ativo', dataEncerramento: null, motivoEncerramento: null },
+    'Processo reaberto');
+}
+
+/**
+ * Exclusão lógica do processo e de tudo que dele depende.
+ *
+ * Serve ao cadastro equivocado, não ao processo encerrado — para esse existe o
+ * arquivamento. A exclusão é recuperável na lixeira, e os vínculos saem junto
+ * para que não restem prazos apontando para processo inexistente.
+ */
+export function excluirProcesso(id, motivo = '') {
+  const processo = db.obter('processos', id);
+  if (!processo) throw new Error('Processo não encontrado.');
+
+  const removidos = {};
+  for (const colecao of VINCULADAS) {
+    for (const registro of db.listar(colecao, { processoId: id })) {
+      db.remover(colecao, registro.id, `Processo excluído: ${motivo || 'sem motivo informado'}`);
+      removidos[colecao] = (removidos[colecao] || 0) + 1;
+    }
+  }
+  db.remover('processos', id, motivo || null);
+  return { removidos, total: Object.values(removidos).reduce((a, b) => a + b, 0) };
+}
+
 export function concluirPrazo(id, observacao) {
   const atual = db.obter('prazos', id);
   const mudancas = { status: 'concluido', concluidoEm: new Date().toISOString() };
