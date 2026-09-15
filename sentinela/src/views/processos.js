@@ -17,6 +17,7 @@ import { abrirFormularioPrazo, historicoHTML } from './prazos.js';
 import { abrirFormularioTarefa } from './tarefas.js';
 import { abrirFormularioAudiencia } from './audiencias.js';
 import { abrirFormularioDocumento } from './documentos.js';
+import { abrirConsultaProcessual } from './primeiro-acesso.js';
 
 let filtroProc = { status: 'ativo', busca: '', responsavelId: '' };
 
@@ -26,7 +27,8 @@ export function processos({ params }) {
 
   const tela = h(`<div>
     ${cabecalhoPagina('Processos', pode('processos:criar')
-    ? '<button class="btn btn--primario" data-acao="novo">Novo processo</button>' : '')}
+    ? `<button class="btn" data-acao="consultar">Buscar pela OAB</button>
+       <button class="btn btn--primario" data-acao="novo">Novo processo</button>` : '')}
     <div class="filtros">
       <select data-filtro="status">
         <option value="ativo">Ativos</option>
@@ -73,6 +75,7 @@ export function processos({ params }) {
   delegar(tela, 'input', 'input[data-filtro]', (_e, el) => { filtroProc[el.dataset.filtro] = el.value; desenhar(); });
   delegar(tela, 'click', 'tbody tr', (_e, el) => ir(`processos/${el.dataset.id}`));
   delegar(tela, 'click', '[data-acao="novo"]', () => abrirFormularioProcesso({}, desenhar));
+  delegar(tela, 'click', '[data-acao="consultar"]', () => abrirConsultaProcessual(desenhar));
   qs('[data-filtro="status"]', tela).value = filtroProc.status;
   desenhar();
   return tela;

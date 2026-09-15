@@ -106,6 +106,12 @@ trecho marcado como ponto de extensão:
 - `gerarICS` — exportação para Google, Apple e Outlook Calendar.
 - `core/ia.js` — `interpretarPublicacao` pode delegar a um modelo de linguagem
   mantendo o mesmo formato de retorno.
+- `core/djen.js` — consulta pública de comunicações do CNJ, em
+  `comunicaapi.pje.jus.br/api/v1/comunicacao`, sem cadastro nem certificado.
+  Aceita busca por OAB e seccional, e é dela que o sistema deduz em quais
+  processos o advogado atua. O serviço recusa acesso originado de fora do
+  Brasil, e o navegador só conclui a chamada se a origem for autorizada, de
+  modo que, havendo backend próprio, a consulta passa por `/api/djen`.
 
 Integrações com tribunais (PJe, e-SAJ, eproc, Projudi), assinatura eletrônica e
 armazenamento em nuvem entram como novos adaptadores nesse mesmo arquivo, sem tocar

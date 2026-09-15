@@ -10,29 +10,45 @@ import { h, qs, esc, aviso, modal } from '../ui/ui.js';
 import { db } from '../core/store.js';
 import { usuarioAtual } from '../core/auth.js';
 import { tribunais, interpretarListaProcessos } from '../core/integracoes.js';
-import { fmtCNJ } from '../core/util.js';
+import { fmtCNJ, fmtData, hoje, addDays } from '../core/util.js';
 import { MARCA } from '../core/marca.js';
 
 const UFS = ['AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT',
   'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO'];
 
-export function abrirPrimeiroAcesso(aoConcluir) {
+export function abrirConsultaProcessual(aoConcluir, { boasVindas = false } = {}) {
   const usuario = usuarioAtual();
   const oabSalva = String(usuario?.oab || '').replace(/[^\d]/g, '');
   const ufSalva = (String(usuario?.oab || '').match(/[A-Z]{2}/) || [''])[0];
 
   const corpo = h(`<div class="pilha">
-    <p class="quebra">Sua base começa vazia, pronta para os seus cadastros. Se preferir,
-      o sistema pode procurar seus processos ativos nos tribunais a partir da sua inscrição
-      na OAB e trazer apenas o que ainda está em andamento.</p>
+    <p class="quebra">${boasVindas ? 'Sua base começa vazia, pronta para os seus cadastros. Se preferir, o' : 'O'}
+      sistema consulta o Diário de Justiça Eletrônico Nacional pela sua inscrição na OAB e
+      traz os processos em que você foi intimado no período, descartando os que já tiveram
+      baixa definitiva. Processos já cadastrados não são duplicados. A consulta é pública e
+      não exige certificado digital.</p>
 
     <div class="form__linha form__linha--3">
       <div class="campo"><label for="pa-oab">Inscrição na OAB</label>
         <input id="pa-oab" type="text" value="${esc(oabSalva)}" placeholder="Somente números"></div>
       <div class="campo"><label for="pa-uf">Seccional</label>
         <select id="pa-uf">${UFS.map((u) => `<option value="${u}" ${u === ufSalva ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
-      <div class="campo"><label>&nbsp;</label>
-        <button type="button" class="btn btn--primario" id="pa-buscar">Pesquisar nos tribunais</button></div>
+      <div class="campo"><label for="pa-periodo">Intimações dos últimos</label>
+        <select id="pa-periodo">
+          <option value="90">3 meses</option>
+          <option value="180" selected>6 meses</option>
+          <option value="365">12 meses</option>
+        </select></div>
+    </div>
+
+    <div class="campo campo--linha">
+      <input type="checkbox" id="pa-publicacoes" checked>
+      <label for="pa-publicacoes">Trazer também as intimações para a fila de conferência de publicações</label>
+    </div>
+
+    <div class="linha">
+      <button type="button" class="btn btn--primario" id="pa-buscar">Pesquisar na consulta pública</button>
+      <span class="mini mudo">Fonte: Diário de Justiça Eletrônico Nacional, do CNJ.</span>
     </div>
 
     <div id="pa-resultado"></div>
@@ -49,10 +65,15 @@ export function abrirPrimeiroAcesso(aoConcluir) {
     </details>
   </div>`);
 
-  const relatar = ({ importados, arquivados, duplicados, invalidos }) => {
+  const relatar = ({ importados, arquivados, duplicados, invalidos }, extra = {}) => {
+    const origem = extra.comunicacoes
+      ? `<div class="mini mudo">${extra.comunicacoes} intimação(ões) lida(s) no DJEN.`
+        + `${extra.publicacoes ? ` ${extra.publicacoes.importadas} enviada(s) à fila de conferência.` : ''}</div>`
+      : '';
     if (importados.length) {
       qs('#pa-resultado', corpo).innerHTML = `
         <div class="aviso aviso--ok">${importados.length} processo(s) ativo(s) importado(s).</div>
+        ${origem}
         <div class="mini mudo">${importados.slice(0, 12).map((p) => esc(fmtCNJ(p.numeroCNJ))).join(' · ')}</div>
         <div class="mini mudo" style="margin-top:.4rem">Vincule cada processo ao cliente correspondente
           em Processos. A consulta devolve as partes, mas não diz qual delas o escritório representa.</div>
@@ -61,6 +82,7 @@ export function abrirPrimeiroAcesso(aoConcluir) {
     } else {
       qs('#pa-resultado', corpo).innerHTML = `
         <div class="aviso aviso--atencao">Nenhum processo ativo foi importado.</div>
+        ${origem}
         ${resumoDescartes({ arquivados, duplicados, invalidos })}`;
     }
   };
@@ -74,29 +96,48 @@ export function abrirPrimeiroAcesso(aoConcluir) {
   };
 
   const ref = modal({
-    titulo: `Bem-vindo ao ${MARCA}`, conteudo: corpo, largo: true,
+    titulo: boasVindas ? `Bem-vindo ao ${MARCA}` : 'Consulta processual pela OAB',
+    conteudo: corpo, largo: true,
     acoes: [{ rotulo: 'Começar', classe: 'btn--primario', aoClicar: (fechar) => { fechar(); aoConcluir?.(); } }],
   });
 
   qs('#pa-buscar', corpo).addEventListener('click', async () => {
     const oab = qs('#pa-oab', corpo).value.trim();
     const uf = qs('#pa-uf', corpo).value;
+    const dias = Number(qs('#pa-periodo', corpo).value);
+    const trazerPublicacoes = qs('#pa-publicacoes', corpo).checked;
     const botao = qs('#pa-buscar', corpo);
+    const de = addDays(hoje(), -dias);
+
     botao.disabled = true;
-    botao.textContent = 'Pesquisando…';
+    botao.textContent = 'Consultando o CNJ…';
+    qs('#pa-resultado', corpo).innerHTML = '<div class="mini mudo">Consultando as comunicações '
+      + `disponibilizadas entre ${esc(fmtData(de))} e ${esc(fmtData(hoje()))}…</div>`;
+
     try {
-      const r = await tribunais.consultarPorOAB({ oab, uf });
+      const r = await tribunais.consultarPorOAB({ oab, uf, de, ate: hoje() });
       if (!r.disponivel) {
-        qs('#pa-resultado', corpo).innerHTML = `<div class="aviso aviso--info quebra">${esc(r.motivo)}</div>`;
+        qs('#pa-resultado', corpo).innerHTML = `<div class="aviso aviso--atencao quebra">${esc(r.motivo)}</div>`;
         qs('#pa-manual', corpo).open = true;
         return;
       }
-      relatar(tribunais.importar(r.processos, { responsavelId: usuario?.id || null }));
+      if (!r.processos.length) {
+        qs('#pa-resultado', corpo).innerHTML = '<div class="aviso aviso--info">Nenhuma intimação '
+          + 'localizada para esta inscrição no período. Amplie o intervalo ou importe a lista do tribunal.</div>';
+        qs('#pa-manual', corpo).open = true;
+        return;
+      }
+
+      const resultado = tribunais.importar(r.processos, { responsavelId: usuario?.id || null });
+      let publicacoes = null;
+      if (trazerPublicacoes) publicacoes = tribunais.importarComunicacoes(r.comunicacoes);
+      relatar(resultado, { comunicacoes: r.comunicacoes.length, publicacoes });
+
       // A inscrição fica guardada para as próximas consultas.
       if (oab) db.atualizar('usuarios', usuario.id, { oab: `OAB/${uf} ${oab}` }, 'Inscrição na OAB registrada');
     } finally {
       botao.disabled = false;
-      botao.textContent = 'Pesquisar nos tribunais';
+      botao.textContent = 'Pesquisar na consulta pública';
     }
   });
 

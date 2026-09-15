@@ -124,6 +124,41 @@ async function api(req, res, url) {
     return responder(res, 403, { erro: 'Requisição não autorizada.' });
   }
 
+  // Repasse da consulta pública de comunicações do CNJ.
+  //
+  // O navegador não consegue chamar o serviço do CNJ a partir de outra origem,
+  // e o serviço recusa acesso de fora do Brasil. Pelo servidor do escritório a
+  // chamada sai do mesmo lugar em que ele está hospedado e sem o obstáculo da
+  // política de origem. Nada é gravado aqui: o repasse é somente de leitura.
+  if (rota === '/djen/comunicacao' && metodo === 'GET') {
+    const permitidos = ['numeroOab', 'ufOab', 'nomeAdvogado', 'nomeParte', 'numeroProcesso',
+      'dataDisponibilizacaoInicio', 'dataDisponibilizacaoFim', 'pagina', 'itensPorPagina'];
+    const parametros = new URLSearchParams();
+    for (const chave of permitidos) {
+      const valor = url.searchParams.get(chave);
+      if (valor) parametros.set(chave, valor.slice(0, 64));
+    }
+    if (!parametros.get('numeroOab') && !parametros.get('numeroProcesso')) {
+      return responder(res, 400, { erro: 'Informe a OAB ou o número do processo.' });
+    }
+
+    const corte = AbortSignal.timeout(config.tempoLimiteConsultaMs);
+    try {
+      const externa = await fetch(`${config.djenBase}/comunicacao?${parametros}`, {
+        headers: { Accept: 'application/json' }, signal: corte,
+      });
+      if (!externa.ok) {
+        return responder(res, 502, {
+          erro: `O serviço do CNJ respondeu ${externa.status}.`,
+          origem: externa.status,
+        });
+      }
+      return responder(res, 200, await externa.json());
+    } catch (e) {
+      return responder(res, 504, { erro: `Consulta ao CNJ não concluída: ${e.message}` });
+    }
+  }
+
   if (rota === '/estado' && metodo === 'GET') {
     const desde = url.searchParams.get('desde');
     return responder(res, 200, desde ? estadoDesde(desde) : estadoCompleto());

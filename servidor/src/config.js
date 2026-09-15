@@ -25,6 +25,9 @@ export const config = {
     senha: process.env.SENTINELA_ADMIN_SENHA || '',
   },
   semearDemonstracao: process.env.SENTINELA_DEMO === 'true',
+  // Consulta pública de comunicações do CNJ, repassada pelo servidor.
+  djenBase: (process.env.SENTINELA_DJEN_BASE || 'https://comunicaapi.pje.jus.br/api/v1').replace(/\/$/, ''),
+  tempoLimiteConsultaMs: Number(process.env.SENTINELA_CONSULTA_TIMEOUT || 25000),
 };
 
 if (!existsSync(config.dadosDir)) mkdirSync(config.dadosDir, { recursive: true });

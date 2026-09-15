@@ -11,7 +11,7 @@ import { publicacoes as servicoPublicacoes } from './core/integracoes.js';
 import { registrar, iniciarRoteador, aoTrocarRota, renderizar } from './ui/roteador.js';
 import { montarCasca, atualizarNavegacao, atualizarContadorNotificacoes } from './ui/casca.js';
 import { telaLogin } from './views/login.js';
-import { abrirPrimeiroAcesso } from './views/primeiro-acesso.js';
+import { abrirConsultaProcessual } from './views/primeiro-acesso.js';
 import { aviso } from './ui/ui.js';
 
 import { dashboard } from './views/dashboard.js';
@@ -103,7 +103,7 @@ function abrirAplicacao({ novaConta = false } = {}) {
 
   // Conta recém-criada entra no sistema vazio: o assistente oferece trazer os
   // processos ativos antes de qualquer cadastro manual.
-  if (novaConta) abrirPrimeiroAcesso(() => renderizar(alvo));
+  if (novaConta) abrirConsultaProcessual(() => renderizar(alvo), { boasVindas: true });
 
   rotinaDiaria();
   // Reavalia alertas periodicamente enquanto a aba permanece aberta.

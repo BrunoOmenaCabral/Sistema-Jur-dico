@@ -26,6 +26,8 @@ const { interpretarPublicacao, relatorioCliente, analisarAndamento, novidadesDoP
   relatorioProcessual } = await import('../src/core/ia.js');
 const { conflitosDePrazo, indicadores, eventosAgenda, linhaDoTempo } = await import('../src/core/dominio.js');
 const { arquivadoEmDefinitivo, interpretarListaProcessos, tribunais } = await import('../src/core/integracoes.js');
+const { agruparEmProcessos, comunicacaoComoPublicacao, consultarPorOAB, BASE_PADRAO } =
+  await import('../src/core/djen.js');
 
 let passou = 0;
 const teste = (nome, fn) => {
@@ -358,23 +360,108 @@ teste('não duplica processo já cadastrado', () => {
   assert.equal(r.importados.length, 0);
   assert.equal(r.duplicados.length, 1);
 });
-// O executor de testes é síncrono: a consulta é resolvida antes de asseverar.
-const semProvedor = await tribunais.consultarPorOAB({ oab: '12345', uf: 'PE' });
+// O executor de testes é síncrono, e nenhum teste toca a rede: a consulta é
+// resolvida com o serviço simulado antes de asseverar.
+const restaurarFetch = globalThis.fetch;
+globalThis.fetch = async () => { throw new Error('nenhum teste deve chamar a rede'); };
 const semOAB = await tribunais.consultarPorOAB({ oab: '', uf: 'PE' });
-teste('sem provedor a consulta não devolve processo algum', () => {
-  assert.equal(semProvedor.disponivel, false);
-  assert.equal(semProvedor.processos.length, 0);
-  assert.match(semProvedor.motivo, /provedor/i);
-});
-teste('consulta sem OAB informada é recusada', () => {
+globalThis.fetch = restaurarFetch;
+
+teste('consulta sem OAB informada é recusada antes de qualquer chamada', () => {
   assert.equal(semOAB.disponivel, false);
   assert.match(semOAB.motivo, /OAB/);
+  assert.equal(semOAB.processos.length, 0);
 });
 teste('processo importado aguarda vínculo com o cliente', () => {
   const importado = db.listar('processos').find((p) => p.origem === 'consulta processual');
   assert.ok(importado);
   assert.equal(importado.clienteId, null);
   assert.equal(importado.pendenteVinculoCliente, true);
+});
+
+console.log('\nConsulta pública do CNJ (DJEN)');
+
+/** Comunicação no formato que o serviço do CNJ devolve. */
+const comunicacao = (numero, data, texto, extra = {}) => ({
+  id: Math.random(), numero_processo: numero, data_disponibilizacao: data, texto,
+  siglaTribunal: 'TJPE', nomeOrgao: '1ª Vara Cível', nomeClasse: 'Procedimento Comum',
+  tipoComunicacao: 'Intimação', ...extra,
+});
+
+teste('agrupa comunicações por processo e guarda a mais recente', () => {
+  const g = agruparEmProcessos([
+    comunicacao(cnjValido(301), '2026-03-02', 'Despacho inicial.'),
+    comunicacao(cnjValido(301), '2026-07-20', 'Sentença publicada.'),
+    comunicacao(cnjValido(302), '2026-05-10', 'Intime-se.'),
+  ]);
+  assert.equal(g.length, 2);
+  const primeiro = g.find((p) => p.numeroCNJ === cnjValido(301));
+  assert.equal(primeiro.comunicacoes, 2);
+  assert.equal(primeiro.ultimaData, '2026-07-20');
+  assert.equal(primeiro.ultimoMovimento, 'Sentença publicada.');
+  assert.equal(primeiro.tribunal, 'TJPE');
+});
+teste('descarta comunicação sem número CNJ válido', () => {
+  assert.equal(agruparEmProcessos([comunicacao('123', '2026-05-10', 'x')]).length, 0);
+});
+teste('aceita data em formato brasileiro', () => {
+  const g = agruparEmProcessos([comunicacao(cnjValido(303), '10/05/2026', 'Intime-se.')]);
+  assert.equal(g[0].ultimaData, '2026-05-10');
+});
+teste('converte comunicação em publicação do sistema', () => {
+  const pub = comunicacaoComoPublicacao(comunicacao(cnjValido(304), '2026-05-10', 'Prazo de 15 dias.'));
+  assert.equal(pub.numeroCNJ, cnjValido(304));
+  assert.equal(pub.dataDisponibilizacao, '2026-05-10');
+  assert.equal(pub.origem, 'DJEN');
+  assert.match(pub.diario, /DJEN/);
+});
+teste('processo com baixa definitiva na última comunicação é descartado', () => {
+  const g = agruparEmProcessos([
+    comunicacao(cnjValido(305), '2026-01-10', 'Cite-se.'),
+    comunicacao(cnjValido(305), '2026-08-01', 'Arquivem-se os autos com baixa definitiva.'),
+  ]);
+  assert.equal(arquivadoEmDefinitivo(g[0]), true);
+});
+
+// A consulta é exercitada com o serviço simulado, sem tocar a rede.
+const fetchOriginal = globalThis.fetch;
+const simular = (resposta) => { globalThis.fetch = async () => resposta; };
+const respostaJSON = (corpo, status = 200) => ({
+  ok: status >= 200 && status < 300, status, json: async () => corpo,
+});
+
+const recusaSemOab = await consultarPorOAB({ numeroOab: '', ufOab: 'PE' });
+const recusaSemUf = await consultarPorOAB({ numeroOab: '12345', ufOab: '' });
+simular(respostaJSON({ count: 1, items: [comunicacao(cnjValido(306), '2026-06-01', 'Intime-se.')] }));
+const sucesso = await consultarPorOAB({ numeroOab: '12.345', ufOab: 'pe' });
+simular(respostaJSON({}, 403));
+const bloqueio = await consultarPorOAB({ numeroOab: '12345', ufOab: 'PE' });
+globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+const semRede = await consultarPorOAB({ numeroOab: '12345', ufOab: 'PE' });
+globalThis.fetch = fetchOriginal;
+
+teste('recusa consulta sem OAB ou sem seccional', () => {
+  assert.equal(recusaSemOab.ok, false);
+  assert.match(recusaSemOab.motivo, /OAB/);
+  assert.equal(recusaSemUf.ok, false);
+  assert.match(recusaSemUf.motivo, /seccional/i);
+});
+teste('lê as comunicações devolvidas pelo serviço', () => {
+  assert.equal(sucesso.ok, true);
+  assert.equal(sucesso.comunicacoes.length, 1);
+  assert.equal(sucesso.total, 1);
+});
+teste('bloqueio geográfico é explicado, não mascarado', () => {
+  assert.equal(bloqueio.ok, false);
+  assert.match(bloqueio.motivo, /403/);
+  assert.match(bloqueio.motivo, /Brasil/);
+});
+teste('falha de origem no navegador é explicada', () => {
+  assert.equal(semRede.ok, false);
+  assert.match(semRede.motivo, /origem|servidor/i);
+});
+teste('endereço padrão é o do serviço público do CNJ', () => {
+  assert.equal(BASE_PADRAO, 'https://comunicaapi.pje.jus.br/api/v1');
 });
 
 console.log(`\n${passou} verificações concluídas.`);

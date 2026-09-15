@@ -6,6 +6,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -18,12 +19,30 @@ const PORTA = 3311 + Math.floor(Math.random() * 300);
 const BASE = `http://127.0.0.1:${PORTA}`;
 const SENHA_ADMIN = 'administrador123';
 
+// Serviço de comunicações simulado: a API do CNJ recusa acesso de fora do
+// Brasil, e teste não pode depender de rede externa.
+const PORTA_CNJ = PORTA + 1;
+const cnjFalso = createServer((req, res) => {
+  const url = new URL(req.url, `http://127.0.0.1:${PORTA_CNJ}`);
+  ultimaConsultaCNJ = url.search;
+  if (url.pathname !== '/comunicacao') { res.writeHead(404); return res.end(); }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ status: 'success', count: 1, items: [{
+    id: 1, numero_processo: '00004018320268190001', data_disponibilizacao: '2026-09-10',
+    siglaTribunal: 'TJPE', nomeOrgao: '3ª Vara Cível', texto: 'Intime-se no prazo de 15 dias.',
+  }] }));
+});
+let ultimaConsultaCNJ = '';
+cnjFalso.listen(PORTA_CNJ, '127.0.0.1');
+process.on('exit', () => cnjFalso.close());
+
 const opcoes = process.allowedNodeEnvironmentFlags.has('--experimental-sqlite')
   ? ['--experimental-sqlite'] : [];
 const processo = spawn(process.execPath,
   [...opcoes, join(raiz, 'servidor', 'src', 'principal.js')], {
     env: { ...process.env, PORTA: String(PORTA), SENTINELA_DADOS: dados,
-      SENTINELA_ADMIN_SENHA: SENHA_ADMIN, SENTINELA_ADMIN_EMAIL: 'admin@teste.adv.br' },
+      SENTINELA_ADMIN_SENHA: SENHA_ADMIN, SENTINELA_ADMIN_EMAIL: 'admin@teste.adv.br',
+      SENTINELA_DJEN_BASE: `http://127.0.0.1:${PORTA_CNJ}` },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 processo.stderr.on('data', (d) => { if (!/ExperimentalWarning|trace-warnings/.test(String(d))) process.stderr.write(d); });
@@ -263,6 +282,25 @@ await teste('desativar usuário encerra o acesso', async () => {
   assert.equal((await bloqueado.req('POST', '/api/sessao',
     { email: 'assistente@teste.adv.br', senha: 'novasenha456' })).status, 401);
   assert.equal((await assistente.req('GET', '/api/estado')).status, 401);
+});
+
+console.log('\nConsulta pública de comunicações');
+await teste('repassa a consulta por OAB e devolve o que o CNJ respondeu', async () => {
+  const r = await admin.req('GET', '/api/djen/comunicacao?numeroOab=12345&ufOab=PE'
+    + '&dataDisponibilizacaoInicio=2026-03-01&dataDisponibilizacaoFim=2026-09-15');
+  assert.equal(r.status, 200);
+  assert.equal(r.dados.count, 1);
+  assert.equal(r.dados.items[0].siglaTribunal, 'TJPE');
+});
+await teste('encaminha apenas os parâmetros previstos', async () => {
+  await admin.req('GET', '/api/djen/comunicacao?numeroOab=12345&ufOab=PE&segredo=xyz');
+  assert.match(ultimaConsultaCNJ, /numeroOab=12345/);
+  assert.match(ultimaConsultaCNJ, /ufOab=PE/);
+  assert.ok(!ultimaConsultaCNJ.includes('segredo'));
+});
+await teste('recusa consulta sem OAB nem número de processo', async () => {
+  const r = await admin.req('GET', '/api/djen/comunicacao?ufOab=PE');
+  assert.equal(r.status, 400);
 });
 
 console.log('\nConfigurações e encerramento');

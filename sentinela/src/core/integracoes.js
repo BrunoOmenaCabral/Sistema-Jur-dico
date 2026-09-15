@@ -10,6 +10,7 @@ import { db } from './store.js';
 import { fmtCNJ, fmtData, iso, hoje, addDays, uid, norm, cnjDigitos } from './util.js';
 import { processoDe, clienteDe, nomeCliente } from './dominio.js';
 import { interpretarPublicacao, extrairNumerosCNJ } from './ia.js';
+import { consultarPorOAB as consultarDJEN, agruparEmProcessos, comunicacaoComoPublicacao } from './djen.js';
 
 /* -------------------------------------------------------------- arquivo -- */
 
@@ -214,38 +215,36 @@ export function arquivadoEmDefinitivo(bruto) {
 /**
  * Consulta processual pela inscrição na OAB.
  *
- * Não existe serviço público e aberto que devolva, pela OAB, os processos de
- * um advogado em todos os tribunais. O DataJud do CNJ pesquisa por número de
- * processo e não expõe a parte advogada. PJe, e-SAJ, eproc e Projudi exigem
- * certificado digital ou credencial em cada tribunal. A busca por OAB é
- * serviço de provedor contratado, e é a ele que este adaptador se liga.
+ * A fonte é a consulta pública do CNJ: o Diário de Justiça Eletrônico Nacional
+ * publica as citações e intimações de todos os tribunais integrados e aceita
+ * busca por OAB, sem certificado digital e sem cadastro. Os processos são
+ * deduzidos das comunicações recebidas, porque é nelas que o advogado aparece
+ * como destinatário.
  *
- * Sem provedor configurado nada é inventado: a consulta devolve o motivo, e a
- * tela oferece a importação da lista que o próprio tribunal exporta.
+ * O que essa fonte não cobre: processos em segredo de justiça, tribunais ainda
+ * não integrados ao DJEN e processos sem qualquer intimação no período
+ * consultado. Para esses, resta a importação da lista exportada pelo tribunal.
  */
 export const tribunais = {
-  disponivel() {
-    const cfg = db.config().integracoes.tribunais;
-    return Boolean(cfg?.ativo && cfg.provedor && cfg.token);
+  disponivel: () => true,
+
+  async consultarPorOAB({ oab, uf, de = null, ate = null, sinal = null }) {
+    const r = await consultarDJEN({ numeroOab: oab, ufOab: uf, de, ate, sinal });
+    if (!r.ok) return { disponivel: false, processos: [], comunicacoes: [], motivo: r.motivo };
+
+    const processos = agruparEmProcessos(r.comunicacoes);
+    return {
+      disponivel: true,
+      motivo: null,
+      processos,
+      comunicacoes: r.comunicacoes,
+      total: r.total,
+    };
   },
 
-  async consultarPorOAB({ oab, uf }) {
-    if (!String(oab || '').trim()) {
-      return { disponivel: false, processos: [], motivo: 'Informe o número de inscrição na OAB.' };
-    }
-    if (!this.disponivel()) {
-      return {
-        disponivel: false,
-        processos: [],
-        motivo: 'Nenhum provedor de consulta processual configurado. A busca por OAB em todos os '
-          + 'tribunais depende de serviço contratado, porque os sistemas oficiais exigem '
-          + 'certificado digital ou credencial por tribunal. Enquanto isso, importe abaixo a '
-          + 'lista que o tribunal exporta.',
-      };
-    }
-    // Ponto de extensão: requisição ao provedor contratado, com a OAB e a UF.
-    void uf;
-    return { disponivel: true, processos: [] };
+  /** Traz as comunicações do período para a fila de conferência de publicações. */
+  importarComunicacoes(comunicacoes, ref = hoje()) {
+    return publicacoes.importar(comunicacoes.map(comunicacaoComoPublicacao), ref);
   },
 
   /**

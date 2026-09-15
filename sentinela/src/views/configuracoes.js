@@ -115,8 +115,9 @@ export function configuracoes() {
     ['whatsapp', 'WhatsApp', 'API oficial do WhatsApp Business. Sem provedor, o sistema abre o WhatsApp Web.'],
     ['email', 'E-mail', 'Servidor de envio. Sem servidor, é aberto o cliente de e-mail padrão.'],
     ['calendario', 'Calendário externo', 'Exportação unidirecional. A agenda do sistema é a fonte principal.'],
-    ['tribunais', 'Consulta processual', 'Busca de processos pela OAB. Depende de provedor contratado: '
-      + 'PJe, e-SAJ, eproc e Projudi exigem certificado ou credencial por tribunal.']]
+    ['tribunais', 'Consulta processual', 'Busca por OAB na consulta pública do CNJ, sem cadastro nem '
+      + 'certificado. Com o servidor próprio no ar, a chamada passa por ele. O campo de endpoint '
+      + 'substitui o endereço do CNJ, caso use outro provedor.']]
     .map(([chave, titulo, texto]) => `
       <section class="cartao"><div class="cartao__corpo">
         <div class="linha linha--entre"><h3>${esc(titulo)}</h3>
