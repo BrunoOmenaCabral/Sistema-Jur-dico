@@ -779,4 +779,43 @@ teste('os movimentos importados alimentam o relatório processual', () => {
   assert.match(r.texto, /Audiência|Distribuição/);
 });
 
+console.log('\nPonte de consultas na origem');
+
+const { detectarPonte, definirPonte, ponteDisponivel, pontePronta } =
+  await import('../src/core/ponte.js');
+const { baseEmUso: baseDataJud, BASE_PADRAO: BASE_DATAJUD } = await import('../src/core/datajud.js');
+const { baseEmUso: baseDJEN, BASE_PADRAO: BASE_DJEN } = await import('../src/core/djen.js');
+
+const fetchPonte = globalThis.fetch;
+
+definirPonte(null);
+globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, servicos: ['datajud'] }) });
+const comPonte = await detectarPonte();
+const baseComPonte = { datajud: baseDataJud(), djen: baseDJEN() };
+
+definirPonte(null);
+globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+const semPonte = await detectarPonte();
+const baseSemPonte = { datajud: baseDataJud(), djen: baseDJEN() };
+
+definirPonte(null);
+globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+const ponte404 = await detectarPonte();
+globalThis.fetch = fetchPonte;
+
+teste('ponte encontrada passa a ser o caminho das consultas', () => {
+  assert.equal(comPonte, true);
+  assert.equal(baseComPonte.datajud, '/api/datajud');
+  assert.equal(baseComPonte.djen, '/api/djen');
+});
+teste('sem ponte, o endereço volta a ser o do serviço público', () => {
+  assert.equal(semPonte, false);
+  assert.equal(baseSemPonte.datajud, BASE_DATAJUD);
+  assert.equal(baseSemPonte.djen, BASE_DJEN);
+});
+teste('hospedagem sem a rota da ponte não é tratada como ponte', () => {
+  assert.equal(ponte404, false);
+  assert.equal(ponteDisponivel(), false);
+  assert.equal(pontePronta(), true);
+});
 console.log(`\n${passou} verificações concluídas.`);

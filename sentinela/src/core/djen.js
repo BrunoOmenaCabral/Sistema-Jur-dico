@@ -15,6 +15,7 @@
 //    autorizar a origem. Havendo backend próprio, a consulta passa por ele.
 
 import { db, modoAtual } from './store.js';
+import { ponteDisponivel } from './ponte.js';
 import { cnjDigitos, iso, hoje, addDays } from './util.js';
 
 export const BASE_PADRAO = 'https://comunicaapi.pje.jus.br/api/v1';
@@ -28,7 +29,8 @@ export function baseEmUso() {
   const cfg = db.config().integracoes.tribunais || {};
   const informado = cfg.base || (cfg.ativo ? cfg.provedor : '');
   if (informado) return String(informado).replace(/\/$/, '');
-  if (modoAtual() === 'servidor') return '/api/djen';
+  // Servidor próprio ou ponte da hospedagem: ambos repassam na mesma origem.
+  if (modoAtual() === 'servidor' || ponteDisponivel()) return '/api/djen';
   return BASE_PADRAO;
 }
 
@@ -76,10 +78,12 @@ export async function consultarPorOAB({ numeroOab, ufOab, de, ate, sinal = null 
     });
   } catch (e) {
     // fetch só lança assim por rede indisponível ou origem não autorizada.
-    return falha('Não foi possível falar com o serviço do CNJ a partir desta página. '
-      + 'Isso ocorre quando o navegador bloqueia a chamada por política de origem. '
-      + 'Rodando o sistema com o servidor próprio, a consulta passa por ele e funciona. '
-      + `Detalhe técnico: ${e.message}`);
+    return falha(ponteDisponivel()
+      ? `A ponte desta hospedagem não respondeu à consulta ao DJEN. Detalhe: ${e.message}`
+      : 'Esta hospedagem não repassa consultas, e o serviço do CNJ não autoriza chamada vinda '
+        + 'de outra origem: o navegador bloqueia antes de sair. Abra o sistema pelo endereço que '
+        + 'tem a ponte de consultas, ou rode com o servidor próprio. Enquanto isso, use a '
+        + `importação da lista exportada pelo tribunal. Detalhe técnico: ${e.message}`);
   }
 
   if (resposta.status === 403) {

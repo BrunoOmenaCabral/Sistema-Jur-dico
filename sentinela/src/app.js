@@ -5,6 +5,7 @@ import {
   enviarFila, modoAtual,
 } from './core/store.js';
 import { api } from './core/api.js';
+import { detectarPonte } from './core/ponte.js';
 import { usuarioAtual, pode } from './core/auth.js';
 import { sincronizarNotificacoes } from './core/dominio.js';
 import { publicacoes as servicoPublicacoes } from './core/integracoes.js';
@@ -96,6 +97,11 @@ async function iniciar() {
     }
     return;
   }
+
+  // Sem servidor próprio, ainda pode haver repasse na hospedagem. Sabendo disso
+  // antes das telas de consulta, elas deixam de tentar a chamada que o
+  // navegador bloquearia.
+  await detectarPonte();
 
   // Nenhuma base de demonstração é criada automaticamente: quem cria a conta
   // recebe o sistema vazio e faz os próprios cadastros. A demonstração

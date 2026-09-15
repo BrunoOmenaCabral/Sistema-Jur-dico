@@ -14,6 +14,7 @@
 // backend próprio, a consulta passa por ele.
 
 import { db, modoAtual } from './store.js';
+import { ponteDisponivel } from './ponte.js';
 import { cnjDigitos } from './util.js';
 
 export const BASE_PADRAO = 'https://api-publica.datajud.cnj.jus.br';
@@ -68,7 +69,8 @@ export function indiceDoProcesso({ numeroCNJ, tribunal } = {}) {
 export function baseEmUso() {
   const cfg = db.config().integracoes.tribunais || {};
   if (cfg.baseDatajud) return String(cfg.baseDatajud).replace(/\/$/, '');
-  if (modoAtual() === 'servidor') return '/api/datajud';
+  // Servidor próprio ou ponte da hospedagem: ambos repassam na mesma origem.
+  if (modoAtual() === 'servidor' || ponteDisponivel()) return '/api/datajud';
   return BASE_PADRAO;
 }
 
@@ -99,9 +101,12 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
       signal: sinal,
     });
   } catch (e) {
-    return falha('Não foi possível falar com o DataJud a partir desta página. O serviço do CNJ '
-      + 'não autoriza chamada de outra origem, e o navegador bloqueia. Rodando o sistema com o '
-      + `servidor próprio, a consulta passa por ele e funciona. Detalhe técnico: ${e.message}`);
+    return falha(ponteDisponivel()
+      ? `A ponte desta hospedagem não respondeu à consulta ao DataJud. Detalhe: ${e.message}`
+      : 'Esta hospedagem não repassa consultas, e o serviço do CNJ não autoriza chamada vinda '
+        + 'de outra origem: o navegador bloqueia antes de sair. Abra o sistema pelo endereço que '
+        + 'tem a ponte de consultas, ou rode com o servidor próprio. Enquanto isso, o andamento '
+        + `pode ser lançado à mão em "Registrar movimentação". Detalhe técnico: ${e.message}`);
   }
 
   if (resposta.status === 404) return falha(`O índice do tribunal (${alvo}) não existe no DataJud.`);
