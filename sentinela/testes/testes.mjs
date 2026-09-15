@@ -25,8 +25,9 @@ const { db } = await import('../src/core/store.js');
 const { interpretarPublicacao, relatorioCliente, analisarAndamento, novidadesDoProcesso,
   relatorioProcessual } = await import('../src/core/ia.js');
 const { conflitosDePrazo, indicadores, eventosAgenda, linhaDoTempo } = await import('../src/core/dominio.js');
-const { arquivadoEmDefinitivo, interpretarListaProcessos, tribunais } = await import('../src/core/integracoes.js');
-const { agruparEmProcessos, comunicacaoComoPublicacao, consultarPorOAB, BASE_PADRAO } =
+const { arquivadoEmDefinitivo, interpretarListaProcessos, tribunais, oabsMonitoradas,
+  publicacoes: servicoPublicacoes } = await import('../src/core/integracoes.js');
+const { agruparEmProcessos, comunicacaoComoPublicacao, consultarPorOAB, BASE_PADRAO, parsearOAB } =
   await import('../src/core/djen.js');
 
 let passou = 0;
@@ -462,6 +463,71 @@ teste('falha de origem no navegador é explicada', () => {
 });
 teste('endereço padrão é o do serviço público do CNJ', () => {
   assert.equal(BASE_PADRAO, 'https://comunicaapi.pje.jus.br/api/v1');
+});
+
+console.log('\nPublicações a partir da consulta pública');
+
+teste('lê a inscrição escrita de formas diferentes', () => {
+  assert.deepEqual(parsearOAB('OAB/PE 12345'), { numero: '12345', uf: 'PE' });
+  assert.deepEqual(parsearOAB('12345/PE'), { numero: '12345', uf: 'PE' });
+  assert.deepEqual(parsearOAB('SP 987654'), { numero: '987654', uf: 'SP' });
+  assert.equal(parsearOAB('12345'), null);
+  assert.equal(parsearOAB(''), null);
+});
+
+// Cenários de consulta resolvidos antes de asseverar, com o serviço simulado.
+const fetchAntes = globalThis.fetch;
+const usuariosAntes = db.listar('usuarios').map((u) => ({ id: u.id, oab: u.oab }));
+usuariosAntes.forEach((u) => db.atualizar('usuarios', u.id, { oab: '' }));
+db.salvarConfig({ integracoes: { ...db.config().integracoes,
+  publicacoes: { ...db.config().integracoes.publicacoes, oabs: '', ultimaConsulta: null } } });
+
+globalThis.fetch = async () => { throw new Error('não deve consultar sem inscrição'); };
+const semInscricao = await servicoPublicacoes.consultar();
+
+db.atualizar('usuarios', usuariosAntes[0].id, { oab: 'OAB/PE 12345' });
+globalThis.fetch = async () => ({
+  ok: true, status: 200,
+  json: async () => ({ count: 1, items: [{
+    id: 9001, numero_processo: cnjValido(501), data_disponibilizacao: '2026-09-10',
+    siglaTribunal: 'TJPE', nomeOrgao: '1ª Vara', texto: 'Intime-se no prazo de 15 dias.',
+  }] }),
+});
+const comInscricao = await servicoPublicacoes.consultar({ de: '2026-09-01', ate: '2026-09-15' });
+
+globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => ({}) });
+const bloqueada = await servicoPublicacoes.consultar({ de: '2026-09-01', ate: '2026-09-15' });
+globalThis.fetch = fetchAntes;
+
+teste('a inscrição do usuário alimenta a consulta quando nada é configurado', () => {
+  const lista = oabsMonitoradas();
+  assert.ok(lista.some((i) => i.numero === '12345' && i.uf === 'PE'));
+});
+teste('inscrições configuradas têm precedência e não se repetem', () => {
+  db.salvarConfig({ integracoes: { ...db.config().integracoes,
+    publicacoes: { ...db.config().integracoes.publicacoes, oabs: '111/PE, 111/PE, 222/SP' } } });
+  const lista = oabsMonitoradas();
+  assert.deepEqual(lista, [{ numero: '111', uf: 'PE' }, { numero: '222', uf: 'SP' }]);
+  db.salvarConfig({ integracoes: { ...db.config().integracoes,
+    publicacoes: { ...db.config().integracoes.publicacoes, oabs: '' } } });
+});
+teste('sem inscrição a consulta diz o que falta e nada busca', () => {
+  assert.equal(semInscricao.semOAB, true);
+  assert.equal(semInscricao.importadas, 0);
+  assert.match(semInscricao.mensagem, /inscri[çc][ãa]o/i);
+});
+teste('consulta traz a intimação como publicação para conferência', () => {
+  assert.equal(comInscricao.importadas, 1);
+  const pub = db.listar('publicacoes').find((x) => x.numeroCNJ === cnjValido(501));
+  assert.ok(pub);
+  assert.equal(pub.origem, 'DJEN');
+  assert.equal(pub.status, 'pendente');
+  assert.equal(pub.sugestao.dias, 15);
+});
+teste('falha de comunicação não é lida como ausência de intimação', () => {
+  assert.equal(bloqueada.erro, true);
+  assert.equal(bloqueada.importadas, 0);
+  assert.match(bloqueada.mensagem, /403|Brasil/);
 });
 
 console.log(`\n${passou} verificações concluídas.`);

@@ -9,13 +9,14 @@ import { modalFormulario } from '../ui/formulario.js';
 import { cabecalhoPagina, opcoesProcessos, opcoesUsuarios } from '../ui/componentes.js';
 import { db } from '../core/store.js';
 import { interpretarPublicacao } from '../core/ia.js';
-import { publicacoes as servicoPublicacoes, fatiarTextoDiario } from '../core/integracoes.js';
+import { publicacoes as servicoPublicacoes, fatiarTextoDiario, oabsMonitoradas } from '../core/integracoes.js';
 import { processoDe, nomeCliente, conflitosDePrazo } from '../core/dominio.js';
 import { TIPOS_PRAZO, tipoPrazo } from '../core/calculo-prazo.js';
-import { fmtCNJ, fmtData, hoje, cnjDigitos } from '../core/util.js';
+import { fmtCNJ, fmtData, hoje, addDays, cnjDigitos } from '../core/util.js';
 import { ir, recarregar } from '../ui/roteador.js';
 import { definirTitulo } from '../ui/casca.js';
 import { abrirFormularioProcesso } from './processos.js';
+import { usuarioAtual } from '../core/auth.js';
 
 export function publicacoes({ params }) {
   if (params[0]) return fichaPublicacao(params[0]);
@@ -23,11 +24,19 @@ export function publicacoes({ params }) {
   let aba = 'pendente';
 
   const cfg = db.config().integracoes.publicacoes;
+  const inscricoes = oabsMonitoradas();
+  const fonte = cfg.ativo && cfg.provedor
+    ? `Provedor contratado: ${cfg.provedor}`
+    : inscricoes.length
+      ? `Consulta pública do CNJ (DJEN) pela OAB ${inscricoes.map((i) => `${i.numero}/${i.uf}`).join(', ')}`
+      : 'Consulta pública do CNJ (DJEN) — nenhuma inscrição na OAB cadastrada';
+
   const tela = h(`<div>
     ${cabecalhoPagina('Publicações', `
-      <button class="btn btn--primario" data-acao="importar">Importar publicações</button>
-      <button class="btn" data-acao="consultar">Consultar agora</button>`,
-    `Rotina de consulta: ${(cfg.dias || []).join(' · ')} · última consulta ${cfg.ultimaConsulta ? fmtData(cfg.ultimaConsulta) : 'nunca'}`)}
+      <button class="btn btn--primario" data-acao="consultar">Consultar DJEN agora</button>
+      <button class="btn" data-acao="importar">Importar manualmente</button>`,
+    `${fonte} · rotina ${(cfg.dias || []).join(' · ')} · última consulta `
+    + `${cfg.ultimaConsulta ? fmtData(cfg.ultimaConsulta) : 'nunca'}`)}
     <div class="abas">
       <div class="aba ativa" data-aba="pendente">Aguardando conferência</div>
       <div class="aba" data-aba="confirmada">Confirmadas</div>
@@ -69,10 +78,20 @@ export function publicacoes({ params }) {
   });
   delegar(tela, 'click', '.lista__item[data-id]', (_e, el) => ir(`publicacoes/${el.dataset.id}`));
   delegar(tela, 'click', '[data-acao="importar"]', () => abrirImportacao(desenhar));
-  delegar(tela, 'click', '[data-acao="consultar"]', async () => {
-    const r = await servicoPublicacoes.consultar();
-    aviso(r.mensagem, r.importadas ? 'ok' : 'atencao');
-    desenhar();
+  delegar(tela, 'click', '[data-acao="consultar"]', async (_e, el) => {
+    if (!inscricoes.length && !(cfg.ativo && cfg.provedor)) { abrirCadastroOAB(); return; }
+    el.disabled = true;
+    const rotulo = el.textContent;
+    el.textContent = 'Consultando…';
+    try {
+      // Na consulta manual vale a pena olhar mais para trás do que a rotina diária.
+      const r = await servicoPublicacoes.consultar({ de: cfg.ultimaConsulta || addDays(hoje(), -30) });
+      aviso(r.mensagem, r.importadas ? 'ok' : r.erro ? 'erro' : 'atencao');
+      recarregar();
+    } finally {
+      el.disabled = false;
+      el.textContent = rotulo;
+    }
   });
   desenhar();
   return tela;
@@ -225,6 +244,32 @@ function abrirImportacao(aoConcluir) {
       const r = servicoPublicacoes.importar(brutas, dataPublicacao);
       aviso(r.mensagem, 'ok');
       aoConcluir?.();
+    },
+  });
+}
+
+/* -------------------------------------------------- inscrição na OAB ----- */
+
+/**
+ * Sem inscrição cadastrada não há o que consultar no DJEN. Em vez de recusar,
+ * a tela pede o dado que falta e grava no usuário da sessão.
+ */
+function abrirCadastroOAB() {
+  const usuario = usuarioAtual();
+  modalFormulario({
+    titulo: 'Informe sua inscrição na OAB',
+    campos: [
+      { nome: 'numero', rotulo: 'Número', tipo: 'text', obrigatorio: true },
+      { nome: 'uf', rotulo: 'Seccional', tipo: 'text', obrigatorio: true, largura: 2,
+        ajuda: 'Sigla do estado, como PE ou SP.' },
+    ],
+    rotuloSalvar: 'Salvar e consultar',
+    aoSalvar: async ({ numero, uf }) => {
+      const inscricao = `OAB/${String(uf).toUpperCase()} ${String(numero).replace(/\D/g, '')}`;
+      db.atualizar('usuarios', usuario.id, { oab: inscricao }, 'Inscrição na OAB registrada');
+      const r = await servicoPublicacoes.consultar({ de: addDays(hoje(), -30) });
+      aviso(r.mensagem, r.importadas ? 'ok' : r.erro ? 'erro' : 'atencao');
+      recarregar();
     },
   });
 }

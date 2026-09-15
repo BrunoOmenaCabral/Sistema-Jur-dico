@@ -110,7 +110,8 @@ export function configuracoes() {
     integracoes: () => {
       const i = db.config().integracoes;
       return `<div class="grade grade--2">
-        ${[['publicacoes', 'Publicações', 'Provedor de monitoramento de diários oficiais.'],
+        ${[['publicacoes', 'Publicações', 'A fonte padrão é a consulta pública do CNJ (DJEN) pela OAB, '
+      + 'sem cadastro. Um provedor contratado, se informado, tem precedência e alcança o que o DJEN não publica.'],
     ['ia', 'Inteligência artificial', 'Provedor de leitura assistida. Sem provedor, é usada a análise heurística local.'],
     ['whatsapp', 'WhatsApp', 'API oficial do WhatsApp Business. Sem provedor, o sistema abre o WhatsApp Web.'],
     ['email', 'E-mail', 'Servidor de envio. Sem servidor, é aberto o cliente de e-mail padrão.'],
@@ -130,6 +131,11 @@ export function configuracoes() {
         <div class="campo"><label>Credencial</label>
           <input type="password" data-int-campo="${chave}:chave" value="${esc(i[chave]?.chave || i[chave]?.token || '')}"
             autocomplete="off"></div>
+        ${chave === 'publicacoes' ? `<div class="campo"><label>Inscrições na OAB acompanhadas</label>
+          <input data-int-campo="publicacoes:oabs" value="${esc(i.publicacoes?.oabs || '')}"
+            placeholder="12345/PE, 67890/SP">
+          <span class="campo__ajuda">Separadas por vírgula. Em branco, valem as inscrições
+            cadastradas nos usuários do escritório.</span></div>` : ''}
       </div></section>`).join('')}
       </div>
       <div class="linha" style="margin-top:.7rem">

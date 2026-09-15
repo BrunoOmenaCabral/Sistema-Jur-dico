@@ -36,6 +36,17 @@ const UFS = new Set(['AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
   'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO']);
 
 /**
+ * Lê uma inscrição na OAB escrita de qualquer forma usual — "OAB/PE 12345",
+ * "12345/PE", "PE 12345" — e devolve número e seccional separados.
+ */
+export function parsearOAB(texto) {
+  const bruto = String(texto || '').toUpperCase();
+  const uf = (bruto.match(/\b([A-Z]{2})\b/g) || []).find((s) => UFS.has(s)) || '';
+  const numero = (bruto.match(/\d{2,7}/) || [''])[0];
+  return numero && uf ? { numero, uf } : null;
+}
+
+/**
  * Consulta as comunicações de um advogado em um intervalo de datas.
  *
  * @returns {Promise<{ok:boolean, comunicacoes:Array, motivo:string|null, total:number}>}

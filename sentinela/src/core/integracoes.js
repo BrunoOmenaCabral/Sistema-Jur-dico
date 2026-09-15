@@ -10,7 +10,8 @@ import { db } from './store.js';
 import { fmtCNJ, fmtData, iso, hoje, addDays, uid, norm, cnjDigitos } from './util.js';
 import { processoDe, clienteDe, nomeCliente } from './dominio.js';
 import { interpretarPublicacao, extrairNumerosCNJ } from './ia.js';
-import { consultarPorOAB as consultarDJEN, agruparEmProcessos, comunicacaoComoPublicacao } from './djen.js';
+import { consultarPorOAB as consultarDJEN, agruparEmProcessos, comunicacaoComoPublicacao,
+  parsearOAB } from './djen.js';
 
 /* -------------------------------------------------------------- arquivo -- */
 
@@ -130,6 +131,28 @@ export function exportarAgendaICS(eventos, nome = 'agenda-sentinela.ics') {
 
 const DIAS_SEMANA_ID = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
 
+/**
+ * Inscrições na OAB acompanhadas pelo escritório.
+ *
+ * Valem as listadas em Configurações. Na falta delas, as dos próprios usuários
+ * ativos, que é o caso comum do advogado que acabou de criar a conta.
+ */
+export function oabsMonitoradas() {
+  const cfg = db.config().integracoes.publicacoes || {};
+  const daConfiguracao = String(cfg.oabs || '').split(/[,;\n]/).map(parsearOAB).filter(Boolean);
+  const lista = daConfiguracao.length
+    ? daConfiguracao
+    : db.listar('usuarios').filter((u) => u.ativo !== false).map((u) => parsearOAB(u.oab)).filter(Boolean);
+
+  const vistas = new Set();
+  return lista.filter(({ numero, uf }) => {
+    const chave = `${numero}/${uf}`;
+    if (vistas.has(chave)) return false;
+    vistas.add(chave);
+    return true;
+  });
+}
+
 export const publicacoes = {
   /** A rotina padrão de consulta ocorre às segundas, quartas e sextas. */
   devidaHoje(ref = hoje()) {
@@ -139,23 +162,53 @@ export const publicacoes = {
   },
 
   /**
-   * Consulta o provedor configurado. Sem provedor, o sistema apenas registra a
-   * tentativa — nenhuma publicação fictícia é criada.
+   * Busca as intimações do escritório.
+   *
+   * A fonte padrão é a consulta pública do CNJ, pela inscrição na OAB de cada
+   * advogado: é aberta, não exige certificado e cobre os tribunais integrados
+   * ao Diário de Justiça Eletrônico Nacional. Havendo provedor contratado, ele
+   * tem precedência, porque alcança também o que o DJEN não publica.
+   *
    * @returns {Promise<{importadas:number, ignoradas:number, mensagem:string}>}
    */
-  async consultar({ ref = hoje(), lote = null } = {}) {
-    const cfg = db.config().integracoes.publicacoes;
-    let brutas = lote;
+  async consultar({ ref = hoje(), lote = null, de = null, ate = null } = {}) {
+    const cfg = db.config().integracoes.publicacoes || {};
+    if (lote) return this.importar(lote, ref);
 
-    if (!brutas) {
-      if (!cfg?.ativo || !cfg.provedor) {
-        return { importadas: 0, ignoradas: 0,
-          mensagem: 'Nenhum provedor de publicações configurado. Utilize a importação manual.' };
-      }
+    if (cfg.ativo && cfg.provedor) {
       // Ponto de extensão: requisição ao provedor de monitoramento contratado.
-      brutas = [];
+      return this.importar([], ref);
     }
-    return this.importar(brutas, ref);
+
+    const inscricoes = oabsMonitoradas();
+    if (!inscricoes.length) {
+      return { importadas: 0, ignoradas: 0, semOAB: true,
+        mensagem: 'Nenhuma inscrição na OAB cadastrada. Informe a sua em Usuários, ou liste as '
+          + 'inscrições do escritório em Configurações, para que a consulta ao DJEN seja possível.' };
+    }
+
+    // Retoma de onde parou, com uma semana de folga na primeira vez.
+    const inicio = de || cfg.ultimaConsulta || addDays(ref, -7);
+    const brutas = [];
+    const falhas = [];
+
+    for (const { numero, uf } of inscricoes) {
+      const r = await consultarDJEN({ numeroOab: numero, ufOab: uf, de: inicio, ate: ate || ref });
+      if (!r.ok) { falhas.push(`OAB ${numero}/${uf}: ${r.motivo}`); continue; }
+      brutas.push(...r.comunicacoes.map(comunicacaoComoPublicacao));
+    }
+
+    // Toda consulta falhou: é falha de comunicação, não ausência de intimação.
+    if (falhas.length === inscricoes.length) {
+      return { importadas: 0, ignoradas: 0, erro: true, falhas, mensagem: falhas[0] };
+    }
+
+    const r = this.importar(brutas, ref);
+    const rotulo = inscricoes.map((i) => `${i.numero}/${i.uf}`).join(', ');
+    return { ...r, falhas,
+      mensagem: `${r.importadas} intimação(ões) nova(s) desde ${fmtData(inicio)} para ${rotulo}; `
+        + `${r.ignoradas} já existente(s).`
+        + (falhas.length ? ` ${falhas.length} inscrição(ões) sem resposta.` : '') };
   },
 
   /** Recebe publicações brutas, associa ao processo e monta a fila de conferência. */
