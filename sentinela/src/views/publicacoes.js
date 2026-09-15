@@ -10,7 +10,7 @@ import { cabecalhoPagina, opcoesProcessos, opcoesUsuarios } from '../ui/componen
 import { db } from '../core/store.js';
 import { interpretarPublicacao } from '../core/ia.js';
 import { publicacoes as servicoPublicacoes, fatiarTextoDiario, oabsMonitoradas } from '../core/integracoes.js';
-import { processoDe, nomeCliente, conflitosDePrazo } from '../core/dominio.js';
+import { processoDe, nomeCliente, conflitosDePrazo, revisarVinculos } from '../core/dominio.js';
 import { TIPOS_PRAZO, tipoPrazo } from '../core/calculo-prazo.js';
 import { fmtCNJ, fmtData, hoje, addDays, cnjDigitos } from '../core/util.js';
 import { ir, recarregar } from '../ui/roteador.js';
@@ -34,6 +34,7 @@ export function publicacoes({ params }) {
   const tela = h(`<div>
     ${cabecalhoPagina('Publicações', `
       <button class="btn btn--primario" data-acao="consultar">Consultar DJEN agora</button>
+      <button class="btn" data-acao="revisar">Revisar vínculos</button>
       <button class="btn" data-acao="importar">Importar manualmente</button>`,
     `${fonte} · rotina ${(cfg.dias || []).join(' · ')} · última consulta `
     + `${cfg.ultimaConsulta ? fmtData(cfg.ultimaConsulta) : 'nunca'}`)}
@@ -77,6 +78,16 @@ export function publicacoes({ params }) {
     desenhar();
   });
   delegar(tela, 'click', '.lista__item[data-id]', (_e, el) => ir(`publicacoes/${el.dataset.id}`));
+  delegar(tela, 'click', '[data-acao="revisar"]', () => {
+    const r = revisarVinculos({ reinterpretar: interpretarPublicacao });
+    const partes = [];
+    if (r.vinculadas) partes.push(`${r.vinculadas} publicação(ões) vinculada(s) ao processo`);
+    if (r.desvinculadas) partes.push(`${r.desvinculadas} sem processo existente`);
+    if (r.clientesHerdados) partes.push(`${r.clientesHerdados} registro(s) com cliente preenchido`);
+    aviso(partes.length ? `${partes.join('; ')}.` : 'Os vínculos já estavam em dia.',
+      r.total ? 'ok' : 'atencao');
+    recarregar();
+  });
   delegar(tela, 'click', '[data-acao="importar"]', () => abrirImportacao(desenhar));
   delegar(tela, 'click', '[data-acao="consultar"]', async (_e, el) => {
     if (!inscricoes.length && !(cfg.ativo && cfg.provedor)) { abrirCadastroOAB(); return; }
@@ -142,7 +153,10 @@ function fichaPublicacao(id) {
         ${(s.alertas || []).map((a) => `<div class="aviso aviso--atencao" style="margin-top:.4rem">${esc(a)}</div>`).join('')}
         ${s.calculo ? `<details style="margin-top:.5rem"><summary class="mini">Memória de cálculo</summary>
           ${s.calculo.passos.map((x) => `<div class="mini mudo">• ${esc(x)}</div>`).join('')}</details>` : ''}
-        ${!proc ? '<button class="btn" style="margin-top:.6rem" data-acao="cadastrar-processo">Cadastrar processo com este número</button>' : ''}
+        ${!proc ? `<div class="linha" style="margin-top:.6rem">
+          <button class="btn" data-acao="cadastrar-processo">Cadastrar processo com este número</button>
+          <button class="btn" data-acao="revincular">Procurar processo cadastrado</button>
+        </div>` : ''}
       </div></section>
     </div>
   </div>`);
@@ -154,6 +168,13 @@ function fichaPublicacao(id) {
       recarregar();
     }));
 
+  delegar(tela, 'click', '[data-acao="revincular"]', () => {
+    const r = revisarVinculos({ numeroCNJ: p.numeroCNJ, reinterpretar: interpretarPublicacao });
+    aviso(r.vinculadas
+      ? 'Publicação vinculada ao processo cadastrado.'
+      : 'Nenhum processo com este número foi encontrado na base.', r.vinculadas ? 'ok' : 'atencao');
+    if (r.vinculadas) recarregar();
+  });
   delegar(tela, 'click', '[data-acao="ignorar"]', async () => {
     if (!await confirmar({ titulo: 'Marcar como sem prazo',
       mensagem: 'A publicação sai da fila de conferência e nenhum prazo será criado. Confirma?' })) return;

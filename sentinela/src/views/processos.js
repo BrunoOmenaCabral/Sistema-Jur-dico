@@ -10,7 +10,7 @@ import { pode } from '../core/auth.js';
 import {
   processoPorNumero, linhaDoTempo, nomeCliente, nomeUsuario, enriquecerPrazo,
   FASES_PROCESSO, STATUS_PROCESSO, situacaoPrazo,
-  dependenciasDoProcesso, arquivarProcesso, reativarProcesso, excluirProcesso,
+  dependenciasDoProcesso, arquivarProcesso, reativarProcesso, excluirProcesso, revisarVinculos,
 } from '../core/dominio.js';
 import { fmtCNJ, validarCNJ, cnjDigitos, fmtData, fmtMoeda, norm, hoje } from '../core/util.js';
 import { ir, recarregar } from '../ui/roteador.js';
@@ -22,6 +22,7 @@ import { abrirFormularioDocumento } from './documentos.js';
 import { abrirConsultaProcessual } from './primeiro-acesso.js';
 import { abrirFormularioCliente } from './clientes.js';
 import { atualizarPeloTribunal } from '../core/integracoes.js';
+import { interpretarPublicacao } from '../core/ia.js';
 import { INDICES, indiceDoProcesso } from '../core/datajud.js';
 
 let filtroProc = { status: 'ativo', busca: '', responsavelId: '' };
@@ -371,7 +372,12 @@ export function abrirFormularioProcesso(valores = {}, aoConcluir) {
       const registro = { ...dados, numeroCNJ: numero, uf: (dados.uf || '').toUpperCase() };
       if (edicao) db.atualizar('processos', valores.id, registro, 'Processo alterado');
       else db.inserir('processos', registro, 'Processo cadastrado');
-      aviso(edicao ? 'Processo atualizado.' : 'Processo cadastrado.', 'ok');
+
+      // Publicação que chegou antes do cadastro passa a apontar para ele, e a
+      // leitura assistida é refeita com o calendário do tribunal certo.
+      const vinculos = revisarVinculos({ numeroCNJ: numero, reinterpretar: interpretarPublicacao });
+      aviso(edicao ? 'Processo atualizado.' : 'Processo cadastrado.'
+        + (vinculos.vinculadas ? ` ${vinculos.vinculadas} publicação(ões) vinculada(s).` : ''), 'ok');
       aoConcluir?.();
       return true;
     },

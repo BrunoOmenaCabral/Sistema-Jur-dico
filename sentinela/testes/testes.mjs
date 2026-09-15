@@ -1245,4 +1245,69 @@ teste('a sonda guarda a região informada pela ponte', () => {
   assert.equal(regiaoDaPonte(), null);
 });
 
+console.log('\nRevisão de vínculos');
+
+const { revisarVinculos } = await import('../src/core/dominio.js');
+
+// Publicação chega antes do processo existir, que é o caso comum.
+const numeroOrfao = cnjValido(981);
+const pubOrfa = db.inserir('publicacoes', {
+  numeroCNJ: numeroOrfao, processoId: null, status: 'pendente',
+  dataPublicacao: hoje(), dataDisponibilizacao: hoje(),
+  conteudo: 'Manifeste-se a parte autora no prazo de 15 dias.',
+  sugestao: interpretarPublicacao({ numeroCNJ: numeroOrfao, dataPublicacao: hoje(),
+    conteudo: 'Manifeste-se a parte autora no prazo de 15 dias.' }),
+});
+
+teste('a publicação nasce sem processo quando ele ainda não existe', () => {
+  assert.equal(db.obter('publicacoes', pubOrfa.id).processoId, null);
+  assert.equal(pubOrfa.sugestao.processoId, null);
+});
+
+const processoTardio = db.inserir('processos', {
+  numeroCNJ: numeroOrfao, clienteId: processo.clienteId, status: 'ativo',
+  tribunal: 'TJPE', uf: 'PE',
+});
+const revisao = revisarVinculos({ numeroCNJ: numeroOrfao, reinterpretar: interpretarPublicacao });
+
+teste('cadastrado o processo, a publicação encontra o vínculo', () => {
+  assert.equal(revisao.vinculadas, 1);
+  assert.equal(db.obter('publicacoes', pubOrfa.id).processoId, processoTardio.id);
+});
+teste('a leitura assistida é refeita com o processo à vista', () => {
+  const s = db.obter('publicacoes', pubOrfa.id).sugestao;
+  assert.equal(s.processoId, processoTardio.id);
+  // O alerta de processo ausente não pode sobreviver ao vínculo.
+  assert.ok(!s.alertas.some((a) => /não localizado na base/i.test(a)));
+});
+teste('revisar de novo não muda nada', () => {
+  const r = revisarVinculos({ numeroCNJ: numeroOrfao, reinterpretar: interpretarPublicacao });
+  assert.equal(r.vinculadas, 0);
+});
+
+teste('processo excluído desfaz o vínculo em vez de deixá-lo morto', () => {
+  db.remover('processos', processoTardio.id, 'teste');
+  const r = revisarVinculos({ numeroCNJ: numeroOrfao });
+  assert.equal(r.desvinculadas, 1);
+  assert.equal(db.obter('publicacoes', pubOrfa.id).processoId, null);
+  db.restaurar('processos', processoTardio.id);
+});
+
+teste('registro ligado a processo herda dele o cliente que falta', () => {
+  const semCliente = db.inserir('prazos', { processoId: processoTardio.id, clienteId: null,
+    tipo: 'manifestacao', status: 'pendente', dataVencimento: addDays(hoje(), 10) });
+  const r = revisarVinculos({});
+  assert.ok(r.clientesHerdados >= 1);
+  assert.equal(db.obter('prazos', semCliente.id).clienteId, processo.clienteId);
+});
+
+teste('a revisão limitada a um número não percorre as demais publicações', () => {
+  const outra = db.inserir('publicacoes', { numeroCNJ: cnjValido(982), processoId: null,
+    status: 'pendente', dataPublicacao: hoje(), conteudo: 'Outro processo.' });
+  db.inserir('processos', { numeroCNJ: cnjValido(982), clienteId: processo.clienteId, status: 'ativo' });
+  const r = revisarVinculos({ numeroCNJ: numeroOrfao });
+  assert.equal(r.vinculadas, 0);
+  assert.equal(db.obter('publicacoes', outra.id).processoId, null);
+});
+
 console.log(`\n${passou} verificações concluídas.`);

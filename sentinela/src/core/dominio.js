@@ -494,6 +494,82 @@ export function buscaGlobal(termo) {
 
 /* ----------------------------------------------------- ações de prazo --- */
 
+/* --------------------------------------------- revisão de vínculos ------- */
+
+/** Coleções que apontam para processo e devem herdar dele o cliente. */
+const HERDAM_CLIENTE = ['prazos', 'tarefas', 'audiencias', 'documentos', 'comunicacoes'];
+
+/**
+ * Reconcilia os vínculos entre registros.
+ *
+ * A publicação guarda o processo identificado no momento em que chegou. Se o
+ * processo foi cadastrado depois, o vínculo não se refaz sozinho, e a tela
+ * segue dizendo que o processo não existe — que é o que se corrige aqui.
+ *
+ * Três reconciliações, todas idempotentes:
+ *  - publicação sem processo encontra o que foi cadastrado depois, pelo CNJ;
+ *  - publicação apontando para processo excluído perde o vínculo;
+ *  - registro ligado a processo herda dele o cliente que lhe falta.
+ *
+ * @param {object} opcoes
+ *  - numeroCNJ: limita a revisão às publicações de um processo, o que basta
+ *    logo após cadastrá-lo e evita percorrer a base inteira.
+ *  - reinterpretar: refaz a leitura assistida da publicação revinculada, para
+ *    que o prazo passe a ser calculado com o calendário do tribunal certo.
+ */
+export function revisarVinculos({ numeroCNJ = null, reinterpretar = null } = {}) {
+  const porNumero = new Map(db.listar('processos').map((p) => [cnjDigitos(p.numeroCNJ), p]));
+  const alvo = numeroCNJ ? cnjDigitos(numeroCNJ) : null;
+
+  let vinculadas = 0;
+  let desvinculadas = 0;
+  let clientesHerdados = 0;
+
+  for (const pub of db.listar('publicacoes')) {
+    const numero = cnjDigitos(pub.numeroCNJ);
+    if (alvo && numero !== alvo) continue;
+
+    const processo = porNumero.get(numero) || null;
+    const atual = pub.processoId ? db.obter('processos', pub.processoId) : null;
+
+    if (processo && pub.processoId !== processo.id) {
+      const mudancas = { processoId: processo.id };
+      // A sugestão guardava o estado de quando a publicação chegou.
+      if (reinterpretar) {
+        mudancas.sugestao = reinterpretar({ ...pub, processoId: processo.id });
+      }
+      db.atualizar('publicacoes', pub.id, mudancas, 'Publicação vinculada ao processo cadastrado');
+      vinculadas += 1;
+      continue;
+    }
+
+    // Processo excluído deixa a publicação órfã, e o vínculo morto engana.
+    if (pub.processoId && !atual && !processo) {
+      db.atualizar('publicacoes', pub.id, { processoId: null },
+        'Vínculo desfeito: o processo não existe mais');
+      desvinculadas += 1;
+    }
+  }
+
+  for (const colecao of HERDAM_CLIENTE) {
+    for (const registro of db.listar(colecao)) {
+      if (registro.clienteId || !registro.processoId) continue;
+      const processo = db.obter('processos', registro.processoId);
+      if (!processo?.clienteId) continue;
+      db.atualizar(colecao, registro.id, { clienteId: processo.clienteId },
+        'Cliente herdado do processo');
+      clientesHerdados += 1;
+    }
+  }
+
+  return {
+    vinculadas,
+    desvinculadas,
+    clientesHerdados,
+    total: vinculadas + desvinculadas + clientesHerdados,
+  };
+}
+
 /* ------------------------------------------- encerramento de processo ---- */
 
 /** Coleções que seguem o processo quando ele é excluído. */

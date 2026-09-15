@@ -7,8 +7,9 @@ import {
 import { api } from './core/api.js';
 import { detectarPonte } from './core/ponte.js';
 import { usuarioAtual, pode } from './core/auth.js';
-import { sincronizarNotificacoes } from './core/dominio.js';
+import { sincronizarNotificacoes, revisarVinculos } from './core/dominio.js';
 import { publicacoes as servicoPublicacoes } from './core/integracoes.js';
+import { interpretarPublicacao } from './core/ia.js';
 import { registrar, iniciarRoteador, aoTrocarRota, renderizar } from './ui/roteador.js';
 import { montarCasca, atualizarNavegacao, atualizarContadorNotificacoes } from './ui/casca.js';
 import { telaLogin, telaRedefinicao } from './views/login.js';
@@ -144,6 +145,15 @@ function ligarSincronizacao() {
 
 async function rotinaDiaria() {
   db.backupAutomatico();
+
+  // Publicação que chegou antes do cadastro do processo encontra o vínculo
+  // aqui, sem depender de o usuário lembrar de pedir.
+  const vinculos = revisarVinculos({ reinterpretar: interpretarPublicacao });
+  if (vinculos.vinculadas) {
+    aviso(`${vinculos.vinculadas} publicação(ões) vinculada(s) a processo cadastrado depois.`,
+      'ok', 6000);
+  }
+
   const novas = sincronizarNotificacoes();
   atualizarContadorNotificacoes();
   if (novas) aviso(`${novas} novo(s) alerta(s) na central de notificações.`, 'atencao', 6000);
