@@ -530,6 +530,8 @@ export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
             <div class="mini mudo">${r.total} movimento(s) no tribunal · ${r.repetidos} já constavam.</div>
             ${r.total ? `<div class="mini mudo">${r.decisorios} ato(s) decisório(s)${r.decisorios
     ? ` · ${r.comTeor} com o teor recuperado do diário oficial` : ''}.</div>` : ''}
+            ${r.teoresAcrescentados ? `<div class="mini mudo">${r.teoresAcrescentados} teor(es)
+              acrescentado(s) a movimento que já constava sem ele.</div>` : ''}
             ${r.motivoTeor ? `<div class="aviso aviso--atencao quebra">${esc(r.motivoTeor)}</div>` : ''}
             ${r.complementados.length
     ? `<div class="mini mudo">Capa complementada: ${esc(r.complementados.join(', '))}.</div>` : ''}

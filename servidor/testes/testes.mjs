@@ -42,6 +42,11 @@ const cnjFalso = createServer((req, res) => {
     });
   }
   if (url.pathname !== '/comunicacao') { res.writeHead(404); return res.end(); }
+  if (falhaDoCNJ) {
+    tentativasCNJ += 1;
+    res.writeHead(falhaDoCNJ, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ message: 'detalhe vindo do CNJ' }));
+  }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ status: 'success', count: 1, items: [{
     id: 1, numero_processo: '00004018320268190001', data_disponibilizacao: '2026-09-10',
@@ -50,6 +55,8 @@ const cnjFalso = createServer((req, res) => {
 });
 let ultimaConsultaCNJ = '';
 let ultimaConsultaDataJud = null;
+let falhaDoCNJ = 0;
+let tentativasCNJ = 0;
 cnjFalso.listen(PORTA_CNJ, '127.0.0.1');
 process.on('exit', () => cnjFalso.close());
 
@@ -325,6 +332,25 @@ await teste('encaminha apenas os parâmetros previstos', async () => {
 await teste('recusa consulta sem OAB nem número de processo', async () => {
   const r = await admin.req('GET', '/api/djen/comunicacao?ufOab=PE');
   assert.equal(r.status, 400);
+});
+
+await teste('o status recusado pelo CNJ atravessa o repasse', async () => {
+  falhaDoCNJ = 400; tentativasCNJ = 0;
+  const r = await admin.req('GET', '/api/djen/comunicacao?numeroOab=12345&ufOab=PE');
+  falhaDoCNJ = 0;
+  assert.equal(r.status, 400);
+  assert.equal(r.dados.origem, 400);
+  assert.match(r.dados.detalhe, /detalhe vindo do CNJ/);
+  // Recusa do pedido não se repete.
+  assert.equal(tentativasCNJ, 1);
+});
+await teste('falha do serviço rende uma segunda tentativa', async () => {
+  falhaDoCNJ = 500; tentativasCNJ = 0;
+  const r = await admin.req('GET', '/api/djen/comunicacao?numeroOab=12345&ufOab=PE');
+  falhaDoCNJ = 0;
+  assert.equal(r.status, 502);
+  assert.equal(r.dados.origem, 500);
+  assert.equal(tentativasCNJ, 2);
 });
 
 console.log('\nConsulta de movimentos ao tribunal');

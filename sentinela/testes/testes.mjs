@@ -1080,4 +1080,136 @@ teste('processo só com andamento explica a ausência de teor', () => {
   assert.match(soAndamento.motivoTeor, /ato decisório/i);
 });
 
+console.log('\nRelato do erro vindo do CNJ');
+
+const fetchErro = globalThis.fetch;
+let chamadasDJEN = 0;
+
+// A ponte devolve o status e o detalhe que vieram do serviço do CNJ.
+globalThis.fetch = async () => {
+  chamadasDJEN += 1;
+  return { ok: false, status: 502,
+    json: async () => ({ erro: 'O serviço do CNJ respondeu 500.', origem: 500,
+      detalhe: 'Internal Server Error' }),
+    text: async () => 'erro' };
+};
+const erroDoCNJ = await consultarPorOAB({ numeroOab: '12345', ufOab: 'PE' });
+
+chamadasDJEN = 0;
+globalThis.fetch = async () => {
+  chamadasDJEN += 1;
+  return { ok: false, status: 400,
+    json: async () => ({ erro: 'Parâmetro inválido.', origem: 400 }), text: async () => '' };
+};
+const recusaDoPedido = await consultarPorProcessoTeste();
+const chamadasAposRecusa = chamadasDJEN;
+globalThis.fetch = fetchErro;
+
+async function consultarPorProcessoTeste() {
+  const { consultarPorProcesso } = await import('../src/core/djen.js');
+  return consultarPorProcesso({ numeroProcesso: cnjValido(950) });
+}
+
+teste('o status do CNJ aparece na mensagem, não o da ponte', () => {
+  assert.equal(erroDoCNJ.ok, false);
+  assert.match(erroDoCNJ.motivo, /respondeu 500/);
+  assert.match(erroDoCNJ.motivo, /Internal Server Error/);
+  assert.ok(!/respondeu 502/.test(erroDoCNJ.motivo));
+});
+teste('recusa do pedido não é repetida em todas as tentativas', () => {
+  assert.equal(recusaDoPedido.ok, false);
+  assert.equal(chamadasAposRecusa, 1);
+});
+
+console.log('\nJanela da consulta ao diário');
+
+const { consultarPorProcesso: consultaProcessoDJEN } = await import('../src/core/djen.js');
+const fetchJanela = globalThis.fetch;
+const consultas = [];
+globalThis.fetch = async (url) => {
+  consultas.push(String(url));
+  return { ok: true, status: 200, json: async () => ({ count: 0, items: [] }), text: async () => '{}' };
+};
+await consultaProcessoDJEN({ numeroProcesso: cnjValido(960), de: '2018-01-01', ate: '2026-09-15' });
+const janelaLonga = new URL(consultas[0], 'http://x').searchParams;
+consultas.length = 0;
+await consultaProcessoDJEN({ numeroProcesso: cnjValido(960), de: '2026-05-01', ate: '2026-06-30' });
+const janelaCurta = new URL(consultas[0], 'http://x').searchParams;
+const tentativasFeitas = consultas.length;
+globalThis.fetch = fetchJanela;
+
+teste('janela de anos é reduzida ao teto de dois anos', () => {
+  const de = janelaLonga.get('dataDisponibilizacaoInicio');
+  assert.ok(de > '2024-01-01', `início pedido: ${de}`);
+  assert.equal(janelaLonga.get('dataDisponibilizacaoFim'), '2026-09-15');
+});
+teste('janela curta é preservada como veio', () => {
+  assert.equal(janelaCurta.get('dataDisponibilizacaoInicio'), '2026-05-01');
+  assert.equal(janelaCurta.get('dataDisponibilizacaoFim'), '2026-06-30');
+});
+teste('resposta vazia leva a tentar de outro jeito antes de desistir', () => {
+  assert.ok(tentativasFeitas >= 2, `tentativas: ${tentativasFeitas}`);
+});
+teste('a página pedida fica no limite praticável do serviço', () => {
+  assert.equal(janelaCurta.get('itensPorPagina'), '50');
+});
+
+console.log('\nTeor acrescentado a movimento já importado');
+
+const fetchBackfill = globalThis.fetch;
+const processoDuasFases = db.inserir('processos', {
+  numeroCNJ: cnjValido(970), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+});
+
+const capaComSentenca = {
+  numeroProcesso: cnjValido(970), tribunal: 'TJPE',
+  dataHoraUltimaAtualizacao: '2026-09-10T10:00:00.000Z',
+  movimentos: [{ codigo: 219, nome: 'Procedência', dataHora: '2026-05-20T16:00:00.000Z' }],
+};
+const respostaDataJud970 = {
+  ok: true, status: 200, text: async () => '{}',
+  json: async () => ({ hits: { hits: [{ _source: capaComSentenca }] } }),
+};
+
+// Primeira consulta: o diário está fora do ar.
+globalThis.fetch = async (url) => {
+  if (String(url).includes('datajud') || String(url).includes('_search')) return respostaDataJud970;
+  return { ok: false, status: 502, text: async () => 'erro',
+    json: async () => ({ erro: 'O serviço do CNJ respondeu 500.', origem: 500 }) };
+};
+const semDiario = await atualizar2(processoDuasFases.id);
+
+// Segunda consulta: o diário responde.
+globalThis.fetch = async (url) => {
+  if (String(url).includes('datajud') || String(url).includes('_search')) return respostaDataJud970;
+  return { ok: true, status: 200, text: async () => '{}',
+    json: async () => ({ count: 1, items: [{ numero_processo: cnjValido(970),
+      data_disponibilizacao: '2026-05-22', link: 'https://x/9',
+      texto: 'Julgo procedente o pedido.' }] }) };
+};
+const comDiario = await atualizar2(processoDuasFases.id);
+globalThis.fetch = fetchBackfill;
+
+teste('diário fora do ar não impede a importação do movimento', () => {
+  assert.equal(semDiario.importados, 1);
+  assert.equal(semDiario.comTeor, 0);
+  assert.match(semDiario.motivoTeor, /500/);
+});
+teste('consulta seguinte acrescenta o teor ao movimento que já constava', () => {
+  assert.equal(comDiario.importados, 0);
+  assert.equal(comDiario.teoresAcrescentados, 1);
+  const m = db.listar('movimentacoes', { processoId: processoDuasFases.id })[0];
+  assert.equal(m.teor, 'Julgo procedente o pedido.');
+  assert.equal(m.linkTeor, 'https://x/9');
+  assert.match(m.fonteTeor, /22\/05\/2026/);
+});
+teste('terceira consulta não duplica nem reescreve o teor', () => {
+  const antes = db.listar('movimentacoes', { processoId: processoDuasFases.id }).length;
+  assert.equal(antes, 1);
+});
+teste('o teor recuperado passa a alimentar o relatório', () => {
+  const v = novidadesDoProcesso(processoDuasFases.id, { desde: '2026-01-01' });
+  assert.match(v.texto, /julgado procedente/);
+});
+
 console.log(`\n${passou} verificações concluídas.`);

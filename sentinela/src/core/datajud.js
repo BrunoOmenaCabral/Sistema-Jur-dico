@@ -130,7 +130,12 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
     return falha(`O DataJud não tem o índice do tribunal ${alvo.toUpperCase()}. `
       + 'Confira o tribunal escolhido.');
   }
-  if (!resposta.ok) return falha(`O DataJud respondeu ${resposta.status}. Tente novamente em instantes.`);
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    const detalhe = [corpo?.erro, corpo?.detalhe].filter(Boolean).join(' ').slice(0, 300);
+    return falha(`A consulta ao DataJud falhou com ${resposta.status}. `
+      + (detalhe || 'Tente novamente em instantes.'));
+  }
 
   let dados;
   try { dados = await resposta.json(); }

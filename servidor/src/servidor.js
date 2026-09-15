@@ -188,21 +188,30 @@ async function api(req, res, url) {
       return responder(res, 400, { erro: 'Informe a OAB ou o número do processo.' });
     }
 
-    const corte = AbortSignal.timeout(config.tempoLimiteConsultaMs);
-    try {
-      const externa = await fetch(`${config.djenBase}/comunicacao?${parametros}`, {
-        headers: { Accept: 'application/json' }, signal: corte,
-      });
-      if (!externa.ok) {
-        return responder(res, 502, {
-          erro: `O serviço do CNJ respondeu ${externa.status}.`,
-          origem: externa.status,
+    // Instabilidade momentânea é comum neste serviço, e uma segunda tentativa
+    // resolve boa parte dos casos. Recusa do pedido não se repete.
+    let ultima = { status: 504, erro: 'Consulta ao CNJ não iniciada.' };
+    for (let tentativa = 0; tentativa < 2; tentativa += 1) {
+      if (tentativa) await new Promise((r) => setTimeout(r, 700));
+      try {
+        const externa = await fetch(`${config.djenBase}/comunicacao?${parametros}`, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(config.tempoLimiteConsultaMs),
         });
+        const texto = await externa.text();
+        if (externa.ok) {
+          try { return responder(res, 200, JSON.parse(texto)); }
+          catch { return responder(res, 502, { erro: 'O CNJ devolveu resposta ilegível.' }); }
+        }
+        ultima = { status: externa.status, origem: externa.status,
+          erro: `O serviço do CNJ respondeu ${externa.status}.`, detalhe: texto.slice(0, 400) };
+        if (externa.status < 500) break;
+      } catch (e) {
+        ultima = { status: 504, erro: `Consulta ao CNJ não concluída: ${e.message}` };
       }
-      return responder(res, 200, await externa.json());
-    } catch (e) {
-      return responder(res, 504, { erro: `Consulta ao CNJ não concluída: ${e.message}` });
     }
+    const { status, ...corpo } = ultima;
+    return responder(res, status >= 400 && status < 500 ? status : 502, corpo);
   }
 
   // Repasse da consulta de movimentos ao DataJud.

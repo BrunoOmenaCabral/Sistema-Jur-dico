@@ -24,16 +24,39 @@ module.exports = async (req, res) => {
     return res.status(400).json({ erro: 'Informe a OAB ou o número do processo.' });
   }
 
-  try {
-    const externa = await fetch(`${BASE}/comunicacao?${parametros}`, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(20000),
-    });
-    if (!externa.ok) {
-      return res.status(502).json({ erro: `O serviço do CNJ respondeu ${externa.status}.` });
+  // Instabilidade momentânea é comum neste serviço. Uma segunda tentativa,
+  // após breve espera, resolve boa parte dos casos sem incomodar quem usa.
+  let ultima = null;
+  for (let tentativa = 0; tentativa < 2; tentativa += 1) {
+    if (tentativa) await new Promise((r) => setTimeout(r, 700));
+    try {
+      const externa = await fetch(`${BASE}/comunicacao?${parametros}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(20000),
+      });
+      const texto = await externa.text();
+      if (externa.ok) return res.status(200).json(seguroJSON(texto));
+
+      ultima = {
+        status: externa.status,
+        erro: `O serviço do CNJ respondeu ${externa.status}.`,
+        origem: externa.status,
+        consulta: parametros.toString(),
+        detalhe: texto.slice(0, 400),
+      };
+      // Erro do pedido não muda com repetição; só vale repetir falha do serviço.
+      if (externa.status < 500) break;
+    } catch (e) {
+      ultima = { status: 504, erro: `Consulta ao CNJ não concluída: ${e.message}`,
+        consulta: parametros.toString() };
     }
-    return res.status(200).json(await externa.json());
-  } catch (e) {
-    return res.status(504).json({ erro: `Consulta ao CNJ não concluída: ${e.message}` });
   }
+
+  // O status do CNJ atravessa, para que a origem do problema fique visível.
+  const { status, ...corpo } = ultima;
+  return res.status(status >= 400 && status < 500 ? status : 502).json(corpo);
 };
+
+function seguroJSON(texto) {
+  try { return JSON.parse(texto); } catch { return {}; }
+}

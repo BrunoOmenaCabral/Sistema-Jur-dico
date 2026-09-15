@@ -437,11 +437,18 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
       texto: pub.conteudo, link: pub.link || '',
     }));
 
-    const primeiro = movimentos.find(ehAtoDecisorio)?.data;
+    // A janela vai do primeiro ao último ato decisório, com folga para a
+    // publicação que vem depois. Pedir do primeiro ato até hoje faria, em
+    // processo antigo, uma janela de anos, que o serviço não atende bem.
+    const datas = movimentos.filter(ehAtoDecisorio).map((m) => m.data).filter(Boolean).sort();
+    const inicio = datas[0] ? addDays(datas[0], -1) : null;
+    const fimBruto = datas.at(-1) ? addDays(datas.at(-1), DIAS_ATE_PUBLICACAO + 5) : hoje();
+    const fim = fimBruto > hoje() ? hoje() : fimBruto;
+
     const diario = await consultarDJENProcesso({
       numeroProcesso: processo.numeroCNJ,
-      de: primeiro ? addDays(primeiro, -1) : null,
-      ate: hoje(),
+      de: inicio,
+      ate: fim,
       sinal,
     });
 
@@ -466,13 +473,30 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
     }
   }
 
-  const existentes = new Set(db.listar('movimentacoes', { processoId })
-    .map((m) => m.chaveExterna).filter(Boolean));
+  const existentes = new Map(db.listar('movimentacoes', { processoId })
+    .filter((m) => m.chaveExterna).map((m) => [m.chaveExterna, m]));
 
   let importados = 0;
+  let teoresAcrescentados = 0;
   for (const movimento of movimentos) {
-    if (existentes.has(movimento.chaveExterna)) continue;
-    existentes.add(movimento.chaveExterna);
+    const jaGravado = existentes.get(movimento.chaveExterna);
+
+    // Movimento já importado não entra de novo, mas pode ter ficado sem teor
+    // numa consulta anterior em que o diário não respondeu. Complementa-se o
+    // que falta, sem desfazer o que já estava lá.
+    if (jaGravado) {
+      if (movimento.teor && !jaGravado.teor) {
+        db.atualizar('movimentacoes', jaGravado.id, {
+          teor: movimento.teor,
+          linkTeor: movimento.linkTeor || null,
+          fonteTeor: movimento.fonteTeor || null,
+        }, 'Teor do ato recuperado do diário oficial');
+        teoresAcrescentados += 1;
+      }
+      continue;
+    }
+
+    existentes.set(movimento.chaveExterna, movimento);
     db.inserir('movimentacoes', { ...movimento, processoId }, 'Movimento importado do tribunal');
     importados += 1;
   }
@@ -495,6 +519,7 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
     repetidos: movimentos.length - importados,
     decisorios,
     comTeor,
+    teoresAcrescentados,
     motivoTeor,
     publicacoesConsultadas: consultadas,
     capa: r.processo,

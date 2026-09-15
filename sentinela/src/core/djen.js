@@ -101,7 +101,15 @@ async function requisitar(parametros, sinal) {
       + 'originados do Brasil. Verifique se não há VPN ou proxy no caminho.');
   }
   if (!resposta.ok) {
-    return falha(`O serviço do CNJ respondeu ${resposta.status}. Tente novamente em instantes.`);
+    // O repasse devolve o status e o texto que vieram do CNJ. Mostrar o status
+    // da ponte no lugar do original esconderia a origem do problema.
+    const corpo = await resposta.json().catch(() => null);
+    const origem = corpo?.origem || corpo?.status;
+    const detalhe = [corpo?.erro, corpo?.detalhe].filter(Boolean).join(' ').slice(0, 300);
+    return falha(origem && origem !== resposta.status
+      ? `O serviço do CNJ respondeu ${origem}. ${detalhe}`
+      : `A consulta falhou com ${resposta.status}. ${detalhe || 'Tente novamente em instantes.'}`,
+    { status: resposta.status, origem: origem || null });
   }
 
   let dados;
@@ -112,7 +120,7 @@ async function requisitar(parametros, sinal) {
   return { ok: true, motivo: null, total: Number(dados?.count ?? itens.length), comunicacoes: itens };
 }
 
-const falha = (motivo) => ({ ok: false, motivo, comunicacoes: [], total: 0 });
+const falha = (motivo, extra = {}) => ({ ok: false, motivo, comunicacoes: [], total: 0, ...extra });
 
 /**
  * Consulta as comunicações de um processo específico.
@@ -124,28 +132,41 @@ export async function consultarPorProcesso({ numeroProcesso, de = null, ate = nu
   const numero = cnjDigitos(numeroProcesso);
   if (numero.length !== 20) return falha('Número CNJ inválido.');
 
+  // Janela larga demais costuma derrubar o serviço: dois anos é o teto.
+  let inicio = de;
+  if (inicio && ate) {
+    const limite = addDays(ate, -730);
+    if (inicio < limite) inicio = limite;
+  }
+
   // As tentativas vão da mais restrita à mais ampla. O serviço é sensível ao
   // formato do número e ao intervalo, e nem todo tribunal responde ao mesmo
   // conjunto de parâmetros. Vazio não é erro: é motivo para tentar de outro
   // jeito antes de concluir que não há nada.
   const tentativas = [];
-  if (de || ate) {
-    const comData = new URLSearchParams({ numeroProcesso: numero, itensPorPagina: '100' });
-    if (de) comData.set('dataDisponibilizacaoInicio', de);
+  if (inicio || ate) {
+    const comData = new URLSearchParams({ numeroProcesso: numero, itensPorPagina: '50' });
+    if (inicio) comData.set('dataDisponibilizacaoInicio', inicio);
     if (ate) comData.set('dataDisponibilizacaoFim', ate);
     tentativas.push(comData);
   }
-  tentativas.push(new URLSearchParams({ numeroProcesso: numero, itensPorPagina: '100' }));
-  tentativas.push(new URLSearchParams({ numeroProcesso: fmtCNJ(numero), itensPorPagina: '100' }));
+  tentativas.push(new URLSearchParams({ numeroProcesso: numero, itensPorPagina: '50' }));
+  tentativas.push(new URLSearchParams({ numeroProcesso: fmtCNJ(numero), itensPorPagina: '50' }));
 
   let ultima = falha('Nenhuma tentativa realizada.');
-  for (const parametros of tentativas) {
+  let primeiroErro = null;
+  for (const [i, parametros] of tentativas.entries()) {
+    // O serviço não gosta de rajada: um respiro entre tentativas o estabiliza.
+    if (i) await new Promise((r) => setTimeout(r, 600));
     const r = await requisitar(parametros, sinal);
     if (r.ok && r.comunicacoes.length) return { ...r, consulta: parametros.toString() };
-    if (r.ok) ultima = { ...r, consulta: parametros.toString() };
-    else if (!ultima.ok) ultima = r;
+    if (r.ok) { ultima = { ...r, consulta: parametros.toString() }; continue; }
+
+    primeiroErro ||= r;
+    // Recusa do pedido não muda com repetição; só falha do serviço merece outra.
+    if (r.status && r.status >= 400 && r.status < 500) break;
   }
-  return ultima;
+  return ultima.ok ? ultima : (primeiroErro || ultima);
 }
 
 /**
