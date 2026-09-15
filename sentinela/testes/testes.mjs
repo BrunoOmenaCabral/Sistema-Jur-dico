@@ -29,6 +29,8 @@ const { arquivadoEmDefinitivo, interpretarListaProcessos, tribunais, oabsMonitor
   publicacoes: servicoPublicacoes } = await import('../src/core/integracoes.js');
 const { agruparEmProcessos, comunicacaoComoPublicacao, consultarPorOAB, BASE_PADRAO, parsearOAB } =
   await import('../src/core/djen.js');
+const { definirPonte: definirPonteInicial } = await import('../src/core/ponte.js');
+definirPonteInicial(false); // consultas diretas, salvo onde o teste disser o contrário
 
 let passou = 0;
 const teste = (nome, fn) => {
@@ -733,7 +735,8 @@ const segunda = await atualizarPeloTribunal(processoManual.id);
 globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ hits: { hits: [] } }) });
 const semResultado = await atualizarPeloTribunal(processoManual.id);
 
-globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+globalThis.fetch = async () => ({ ok: false, status: 404,
+  json: async () => ({}), text: async () => '{"error":"index_not_found_exception"}' });
 const indiceInexistente = await consultarProcesso({ numeroCNJ: '00001010820268170001', indice: 'tjpe' });
 
 globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
@@ -767,7 +770,7 @@ teste('processo ausente da base pública é informado, não silenciado', () => {
 });
 teste('índice inexistente e bloqueio de origem são explicados', () => {
   assert.equal(indiceInexistente.ok, false);
-  assert.match(indiceInexistente.motivo, /índice/i);
+  assert.match(indiceInexistente.motivo, /índice do tribunal/i);
   assert.equal(bloqueioOrigem.ok, false);
   assert.match(bloqueioOrigem.motivo, /origem|servidor/i);
 });
@@ -818,4 +821,73 @@ teste('hospedagem sem a rota da ponte não é tratada como ponte', () => {
   assert.equal(ponteDisponivel(), false);
   assert.equal(pontePronta(), true);
 });
+console.log('\nContrato do repasse de consultas');
+
+const { usandoRepasse } = await import('../src/core/datajud.js');
+const fetchRepasse = globalThis.fetch;
+let ultimaChamada = null;
+
+const capturar = (corpoResposta = { hits: { hits: [] } }, status = 200) => async (url, opcoes) => {
+  ultimaChamada = { url, opcoes };
+  return { ok: status < 300, status,
+    json: async () => corpoResposta,
+    text: async () => JSON.stringify(corpoResposta) };
+};
+
+definirPonte(true);
+globalThis.fetch = capturar();
+await consultarProcesso({ numeroCNJ: '00001010820268170001', indice: 'tjpe' });
+const porPonte = ultimaChamada;
+
+definirPonte(false);
+globalThis.fetch = capturar();
+await consultarProcesso({ numeroCNJ: '00001010820268170001', indice: 'tjpe' });
+const direta = ultimaChamada;
+
+definirPonte(true);
+globalThis.fetch = capturar();
+await consultarPorOAB({ numeroOab: '12345', ufOab: 'PE' });
+const djenPorPonte = ultimaChamada;
+
+// Rota de repasse ausente devolve página de erro, não JSON.
+definirPonte(true);
+globalThis.fetch = async () => ({ ok: false, status: 404,
+  json: async () => ({}), text: async () => '<!DOCTYPE html><title>404</title>' });
+const pontefaltando = await consultarProcesso({ numeroCNJ: '00001010820268170001', indice: 'tjpe' });
+
+definirPonte(false);
+globalThis.fetch = async () => ({ ok: false, status: 404,
+  json: async () => ({}), text: async () => '{"error":"index_not_found"}' });
+const indiceAusente = await consultarProcesso({ numeroCNJ: '00001010820268170001', indice: 'tjxx' });
+globalThis.fetch = fetchRepasse;
+definirPonte(false);
+
+teste('pelo repasse vão apenas o índice e o número, sem a chave', () => {
+  assert.equal(porPonte.url, '/api/datajud');
+  const corpo = JSON.parse(porPonte.opcoes.body);
+  assert.deepEqual(corpo, { indice: 'tjpe', numeroProcesso: '00001010820268170001' });
+  assert.equal(porPonte.opcoes.headers.Authorization, undefined);
+});
+teste('na chamada direta o cliente monta a requisição e leva a chave pública', () => {
+  assert.match(direta.url, /api-publica\.datajud\.cnj\.jus\.br\/api_publica_tjpe\/_search$/);
+  assert.match(direta.opcoes.headers.Authorization, /^APIKey /);
+  assert.ok(JSON.parse(direta.opcoes.body).query.match.numeroProcesso);
+});
+teste('o DJEN pelo repasse usa a própria rota, sem duplicar o recurso', () => {
+  assert.ok(djenPorPonte.url.startsWith('/api/djen?'), djenPorPonte.url);
+  assert.ok(!djenPorPonte.url.includes('/comunicacao'));
+});
+teste('ponte ausente não é confundida com índice inexistente', () => {
+  assert.equal(pontefaltando.ok, false);
+  assert.match(pontefaltando.motivo, /ponte de consultas/i);
+  assert.equal(indiceAusente.ok, false);
+  assert.match(indiceAusente.motivo, /índice do tribunal/i);
+});
+teste('o modo de repasse acompanha a ponte', () => {
+  definirPonte(true);
+  assert.equal(usandoRepasse(), true);
+  definirPonte(false);
+  assert.equal(usandoRepasse(), false);
+});
+
 console.log(`\n${passou} verificações concluídas.`);

@@ -329,28 +329,34 @@ await teste('recusa consulta sem OAB nem número de processo', async () => {
 
 console.log('\nConsulta de movimentos ao tribunal');
 await teste('repassa a consulta ao DataJud com a chave do servidor', async () => {
-  const r = await admin.req('POST', '/api/datajud/api_publica_tjpe/_search',
-    { query: { match: { numeroProcesso: '00001010820268170001' } } });
+  const r = await admin.req('POST', '/api/datajud',
+    { indice: 'tjpe', numeroProcesso: '00001010820268170001' });
   assert.equal(r.status, 200);
   assert.equal(r.dados.hits.hits[0]._source.tribunal, 'TJPE');
   assert.equal(ultimaConsultaDataJud.autorizacao, 'APIKey chave-do-servidor');
   assert.match(ultimaConsultaDataJud.caminho, /api_publica_tjpe/);
 });
 await teste('a chave enviada pelo cliente é descartada', async () => {
-  await admin.req('POST', '/api/datajud/api_publica_tjpe/_search',
-    { query: { match: { numeroProcesso: '00001010820268170001' } }, chave: 'forjada' });
+  await admin.req('POST', '/api/datajud',
+    { indice: 'tjpe', numeroProcesso: '00001010820268170001', chave: 'forjada' });
   assert.equal(ultimaConsultaDataJud.autorizacao, 'APIKey chave-do-servidor');
   assert.ok(!ultimaConsultaDataJud.corpo.includes('forjada'));
 });
-await teste('recusa consulta sem número CNJ completo', async () => {
-  const r = await admin.req('POST', '/api/datajud/api_publica_tjpe/_search',
-    { query: { match: { numeroProcesso: '123' } } });
-  assert.equal(r.status, 400);
+await teste('recusa consulta sem número CNJ completo ou sem índice', async () => {
+  assert.equal((await admin.req('POST', '/api/datajud',
+    { indice: 'tjpe', numeroProcesso: '123' })).status, 400);
+  assert.equal((await admin.req('POST', '/api/datajud',
+    { numeroProcesso: '00001010820268170001' })).status, 400);
 });
 await teste('índice inexistente devolve 404 ao cliente', async () => {
-  const r = await admin.req('POST', '/api/datajud/api_publica_inexistente/_search',
-    { query: { match: { numeroProcesso: '00001010820268170001' } } });
+  const r = await admin.req('POST', '/api/datajud',
+    { indice: 'inexistente', numeroProcesso: '00001010820268170001' });
   assert.equal(r.status, 404);
+});
+await teste('o índice não pode escapar do caminho', async () => {
+  await admin.req('POST', '/api/datajud',
+    { indice: '../../etc/passwd', numeroProcesso: '00001010820268170001' });
+  assert.ok(!ultimaConsultaDataJud.caminho.includes('..'));
 });
 
 console.log('\nAlteração de acesso e redefinição de senha');

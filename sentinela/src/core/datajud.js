@@ -65,12 +65,18 @@ export function indiceDoProcesso({ numeroCNJ, tribunal } = {}) {
   return null;
 }
 
-/** Endereço em uso: o repasse do backend, quando houver, senão o serviço do CNJ. */
+/**
+ * Há repasse na mesma origem? Servidor próprio e ponte da hospedagem contam.
+ * Pelo repasse o contrato é simples — índice e número —, porque quem monta a
+ * requisição do Elasticsearch e guarda a chave é o lado do servidor.
+ */
+export const usandoRepasse = () => modoAtual() === 'servidor' || ponteDisponivel();
+
+/** Endereço em uso: o repasse, quando houver, senão o serviço do CNJ. */
 export function baseEmUso() {
   const cfg = db.config().integracoes.tribunais || {};
   if (cfg.baseDatajud) return String(cfg.baseDatajud).replace(/\/$/, '');
-  // Servidor próprio ou ponte da hospedagem: ambos repassam na mesma origem.
-  if (modoAtual() === 'servidor' || ponteDisponivel()) return '/api/datajud';
+  if (usandoRepasse()) return '/api/datajud';
   return BASE_PADRAO;
 }
 
@@ -89,15 +95,20 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
       + 'Informe a sigla no cadastro do processo ou escolha o tribunal na consulta.');
   }
 
+  const repasse = usandoRepasse();
+  const endereco = repasse ? baseEmUso() : `${baseEmUso()}/api_publica_${alvo}/_search`;
+  const cabecalhos = { 'Content-Type': 'application/json' };
+  // A chave só acompanha a chamada direta: no repasse quem a guarda é o servidor.
+  if (!repasse) cabecalhos.Authorization = `APIKey ${CHAVE_PUBLICA}`;
+
   let resposta;
   try {
-    resposta = await fetch(`${baseEmUso()}/api_publica_${alvo}/_search`, {
+    resposta = await fetch(endereco, {
       method: 'POST',
-      headers: {
-        Authorization: `APIKey ${CHAVE_PUBLICA}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query: { match: { numeroProcesso: numero } }, size: 10 }),
+      headers: cabecalhos,
+      body: JSON.stringify(repasse
+        ? { indice: alvo, numeroProcesso: numero }
+        : { query: { match: { numeroProcesso: numero } }, size: 10 }),
       signal: sinal,
     });
   } catch (e) {
@@ -109,7 +120,16 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
         + `pode ser lançado à mão em "Registrar movimentação". Detalhe técnico: ${e.message}`);
   }
 
-  if (resposta.status === 404) return falha(`O índice do tribunal (${alvo}) não existe no DataJud.`);
+  if (resposta.status === 404) {
+    const detalhe = await resposta.text().catch(() => '');
+    // Rota de repasse ausente devolve a página de erro da hospedagem, não JSON.
+    if (repasse && !detalhe.trim().startsWith('{')) {
+      return falha('A ponte de consultas não respondeu nesta hospedagem. Abra o sistema pelo '
+        + 'endereço que tem a ponte, ou rode com o servidor próprio.');
+    }
+    return falha(`O DataJud não tem o índice do tribunal ${alvo.toUpperCase()}. `
+      + 'Confira o tribunal escolhido.');
+  }
   if (!resposta.ok) return falha(`O DataJud respondeu ${resposta.status}. Tente novamente em instantes.`);
 
   let dados;

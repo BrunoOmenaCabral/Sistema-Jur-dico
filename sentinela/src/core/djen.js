@@ -71,7 +71,12 @@ export async function consultarPorOAB({ numeroOab, ufOab, de, ate, sinal = null 
 
   let resposta;
   try {
-    resposta = await fetch(`${baseEmUso()}/comunicacao?${parametros}`, {
+    // Pelo repasse o caminho é a própria rota; direto, é o recurso do CNJ.
+    const base = baseEmUso();
+    const endereco = base.startsWith('/api/')
+      ? `${base}?${parametros}`
+      : `${base}/comunicacao?${parametros}`;
+    resposta = await fetch(endereco, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       signal: sinal,

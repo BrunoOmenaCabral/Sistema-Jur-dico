@@ -176,7 +176,7 @@ async function api(req, res, url) {
   // e o serviço recusa acesso de fora do Brasil. Pelo servidor do escritório a
   // chamada sai do mesmo lugar em que ele está hospedado e sem o obstáculo da
   // política de origem. Nada é gravado aqui: o repasse é somente de leitura.
-  if (rota === '/djen/comunicacao' && metodo === 'GET') {
+  if ((rota === '/djen' || rota === '/djen/comunicacao') && metodo === 'GET') {
     const permitidos = ['numeroOab', 'ufOab', 'nomeAdvogado', 'nomeParte', 'numeroProcesso',
       'dataDisponibilizacaoInicio', 'dataDisponibilizacaoFim', 'pagina', 'itensPorPagina'];
     const parametros = new URLSearchParams();
@@ -210,15 +210,17 @@ async function api(req, res, url) {
   // O serviço do CNJ não autoriza chamada de outra origem, então o navegador
   // sozinho não alcança. A chave usada é a do servidor, nunca a que o cliente
   // mandar, e só o índice e o número do processo atravessam.
-  const datajudRota = rota.match(/^\/datajud\/(api_publica_[a-z0-9]+)\/_search$/);
-  if (datajudRota && metodo === 'POST') {
+  // Mesmo contrato da ponte da hospedagem: índice e número, nada mais.
+  if (rota === '/datajud' && metodo === 'POST') {
     const corpo = await lerCorpo(req);
-    const numero = String(corpo?.query?.match?.numeroProcesso || '').replace(/\D/g, '');
+    const indice = String(corpo?.indice || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const numero = String(corpo?.numeroProcesso || '').replace(/\D/g, '');
+    if (!indice) return responder(res, 400, { erro: 'Informe o índice do tribunal.' });
     if (numero.length !== 20) {
       return responder(res, 400, { erro: 'Informe o número CNJ com 20 dígitos.' });
     }
     try {
-      const externa = await fetch(`${config.datajudBase}/${datajudRota[1]}/_search`, {
+      const externa = await fetch(`${config.datajudBase}/api_publica_${indice}/_search`, {
         method: 'POST',
         headers: {
           Authorization: `APIKey ${config.datajudChave}`,

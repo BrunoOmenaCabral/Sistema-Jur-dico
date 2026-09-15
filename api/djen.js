@@ -3,6 +3,8 @@
 // Dois obstáculos justificam o repasse: o serviço não autoriza chamada de
 // outra origem, e recusa acesso vindo de fora do Brasil. Partindo do servidor,
 // nenhum dos dois se aplica quando a hospedagem está no país.
+//
+// GET /api/djen?numeroOab=...&ufOab=...&dataDisponibilizacaoInicio=...
 
 const BASE = (process.env.DJEN_BASE || 'https://comunicaapi.pje.jus.br/api/v1').replace(/\/$/, '');
 
