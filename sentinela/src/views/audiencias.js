@@ -56,7 +56,8 @@ function fichaAudiencia(id) {
     ${cabecalhoPagina(`Audiência — ${fmtData(a.data)} ${a.hora || ''}`, `
       <button class="btn btn--primario" data-acao="avisar">Avisar cliente</button>
       <button class="btn" data-acao="editar">Editar</button>
-      <button class="btn btn--perigo" data-acao="excluir">Excluir</button>`)}
+      <button class="btn btn--perigo" data-acao="excluir">Excluir</button>`,
+    '', { voltar: 'audiencias' })}
     <div class="cartao"><div class="cartao__corpo">
       <dl class="chave-valor">
         <dt>Data</dt><dd class="negrito">${esc(fmtData(a.data))} ${esc(a.hora || '')}</dd>

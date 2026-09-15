@@ -16,7 +16,7 @@
 
 import { db, modoAtual } from './store.js';
 import { ponteDisponivel } from './ponte.js';
-import { cnjDigitos, iso, hoje, addDays } from './util.js';
+import { cnjDigitos, fmtCNJ, iso, hoje, addDays } from './util.js';
 
 export const BASE_PADRAO = 'https://comunicaapi.pje.jus.br/api/v1';
 
@@ -124,12 +124,28 @@ export async function consultarPorProcesso({ numeroProcesso, de = null, ate = nu
   const numero = cnjDigitos(numeroProcesso);
   if (numero.length !== 20) return falha('Número CNJ inválido.');
 
-  const parametros = new URLSearchParams({ numeroProcesso: numero });
-  if (de) parametros.set('dataDisponibilizacaoInicio', de);
-  if (ate) parametros.set('dataDisponibilizacaoFim', ate);
-  parametros.set('itensPorPagina', '50');
+  // As tentativas vão da mais restrita à mais ampla. O serviço é sensível ao
+  // formato do número e ao intervalo, e nem todo tribunal responde ao mesmo
+  // conjunto de parâmetros. Vazio não é erro: é motivo para tentar de outro
+  // jeito antes de concluir que não há nada.
+  const tentativas = [];
+  if (de || ate) {
+    const comData = new URLSearchParams({ numeroProcesso: numero, itensPorPagina: '100' });
+    if (de) comData.set('dataDisponibilizacaoInicio', de);
+    if (ate) comData.set('dataDisponibilizacaoFim', ate);
+    tentativas.push(comData);
+  }
+  tentativas.push(new URLSearchParams({ numeroProcesso: numero, itensPorPagina: '100' }));
+  tentativas.push(new URLSearchParams({ numeroProcesso: fmtCNJ(numero), itensPorPagina: '100' }));
 
-  return requisitar(parametros, sinal);
+  let ultima = falha('Nenhuma tentativa realizada.');
+  for (const parametros of tentativas) {
+    const r = await requisitar(parametros, sinal);
+    if (r.ok && r.comunicacoes.length) return { ...r, consulta: parametros.toString() };
+    if (r.ok) ultima = { ...r, consulta: parametros.toString() };
+    else if (!ultima.ok) ultima = r;
+  }
+  return ultima;
 }
 
 /**

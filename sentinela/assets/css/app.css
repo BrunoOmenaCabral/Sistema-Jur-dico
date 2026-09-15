@@ -437,3 +437,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: var(--surface-2); border-radius: 0 var(--r-sm) var(--r-sm) 0;
   font-size: .82rem; line-height: 1.55; max-height: 22rem; overflow: auto; white-space: pre-wrap; }
 .selo--publicacao { background: var(--c-publicacao); color: #fff; }
+
+/* Retorno da ficha para a listagem -------------------------------------- */
+.voltar { font-size: 1.15rem; line-height: 1; padding: .3rem .55rem; flex: 0 0 auto; }

@@ -418,11 +418,20 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
   });
   if (!r.ok) return { ok: false, motivo: r.motivo, importados: 0 };
 
-  // Havendo ato decisório, busca-se no diário o texto que o publicou.
+  // Havendo ato decisório, busca-se o texto que o publicou. Primeiro no que já
+  // está na base, que nada custa, depois no diário.
   let movimentos = r.movimentos;
   let comTeor = 0;
+  let motivoTeor = null;
+  let consultadas = 0;
   const decisorios = movimentos.filter(ehAtoDecisorio).length;
+
   if (decisorios) {
+    const locais = db.listar('publicacoes', { processoId }).map((pub) => ({
+      data_disponibilizacao: pub.dataDisponibilizacao || pub.dataPublicacao,
+      texto: pub.conteudo, link: pub.link || '',
+    }));
+
     const primeiro = movimentos.find(ehAtoDecisorio)?.data;
     const diario = await consultarDJENProcesso({
       numeroProcesso: processo.numeroCNJ,
@@ -430,10 +439,25 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
       ate: hoje(),
       sinal,
     });
-    if (diario.ok) {
-      const r2 = acoplarTeor(movimentos, diario.comunicacoes);
-      movimentos = r2.movimentos;
-      comTeor = r2.acoplados;
+
+    const candidatas = [...locais, ...(diario.ok ? diario.comunicacoes : [])];
+    consultadas = candidatas.length;
+    const r2 = acoplarTeor(movimentos, candidatas);
+    movimentos = r2.movimentos;
+    comTeor = r2.acoplados;
+
+    // Sem teor algum, o sistema diz por quê em vez de deixar o resultado mudo.
+    if (!comTeor) {
+      if (!diario.ok) motivoTeor = `O diário não respondeu à consulta: ${diario.motivo}`;
+      else if (!candidatas.length) {
+        motivoTeor = 'O diário não tem publicação alguma deste processo. O Diário de Justiça '
+          + 'Eletrônico Nacional cobre os atos a partir da sua entrada em operação, e processo '
+          + 'em segredo de justiça não é publicado.';
+      } else {
+        motivoTeor = `Foram encontradas ${candidatas.length} publicação(ões) do processo, mas `
+          + 'nenhuma cai no intervalo esperado entre o ato e a sua publicação. O teor pode ser '
+          + 'colado à mão ao editar a movimentação.';
+      }
     }
   }
 
@@ -466,6 +490,8 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
     repetidos: movimentos.length - importados,
     decisorios,
     comTeor,
+    motivoTeor,
+    publicacoesConsultadas: consultadas,
     capa: r.processo,
     complementados: Object.keys(completar),
   };

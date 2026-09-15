@@ -69,7 +69,8 @@ function fichaCliente(id) {
       <button class="btn btn--primario" data-acao="relatorio">Relatório do cliente</button>
       <button class="btn" data-acao="whatsapp">WhatsApp</button>
       <button class="btn" data-acao="editar">Editar</button>`,
-    `${c.tipoPessoa === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'} · ${fmtDocumento(c.documento)}`)}
+    `${c.tipoPessoa === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'} · ${fmtDocumento(c.documento)}`,
+    { voltar: 'clientes' })}
 
     <div class="grade grade--indicadores" style="margin-bottom:.8rem">
       <div class="indicador"><div class="indicador__rotulo">Processos ativos</div>

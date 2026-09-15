@@ -139,7 +139,7 @@ export function fichaProcesso(id) {
     ? '<button class="btn" data-acao="reativar">Reabrir</button>'
     : (pode('processos:editar') ? '<button class="btn" data-acao="arquivar">Arquivar</button>' : '')}
       ${pode('processos:excluir') ? '<button class="btn btn--perigo" data-acao="excluir">Excluir</button>' : ''}`,
-    `${p.classe || ''} · ${p.assunto || ''}`)}
+    `${p.classe || ''} · ${p.assunto || ''}`, { voltar: 'processos' })}
 
     <div class="grade grade--2" style="margin-bottom:.8rem">
       <section class="cartao"><div class="cartao__corpo">
@@ -543,6 +543,7 @@ export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
             <div class="mini mudo">${r.total} movimento(s) no tribunal · ${r.repetidos} já constavam.</div>
             ${r.decisorios ? `<div class="mini mudo">${r.decisorios} ato(s) decisório(s) ·
               ${r.comTeor} com o teor recuperado do diário oficial.</div>` : ''}
+            ${r.motivoTeor ? `<div class="aviso aviso--atencao quebra">${esc(r.motivoTeor)}</div>` : ''}
             ${r.complementados.length
     ? `<div class="mini mudo">Capa complementada: ${esc(r.complementados.join(', '))}.</div>` : ''}
             <div class="mini mudo">Classe: ${esc(r.capa.classe || '—')} · Órgão: ${esc(r.capa.vara || '—')}</div>`;

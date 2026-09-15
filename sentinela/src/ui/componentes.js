@@ -13,8 +13,15 @@ import {
 import { calendarioAplicavel, feriadoEm } from '../core/calculo-prazo.js';
 import { ir } from './roteador.js';
 
-export function cabecalhoPagina(titulo, acoes = '', subtitulo = '') {
+/**
+ * @param {object} opcoes
+ *  - voltar: rota da listagem de onde se veio. Estando em uma ficha, o caminho
+ *    de volta precisa estar à vista, e não depender do botão do navegador.
+ */
+export function cabecalhoPagina(titulo, acoes = '', subtitulo = '', { voltar = null } = {}) {
   return `<div class="pagina__cabecalho">
+    ${voltar ? `<a class="btn btn--fantasma voltar" href="#/${esc(voltar)}"
+      title="Voltar para a listagem" aria-label="Voltar">←</a>` : ''}
     <div><h1>${esc(titulo)}</h1>${subtitulo ? `<div class="mini mudo">${esc(subtitulo)}</div>` : ''}</div>
     <div class="pagina__acoes">${acoes}</div>
   </div>`;

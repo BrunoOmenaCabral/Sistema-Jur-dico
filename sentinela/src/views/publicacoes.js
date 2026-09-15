@@ -111,7 +111,7 @@ function fichaPublicacao(id) {
     ${cabecalhoPagina('Publicação', p.status === 'pendente' ? `
       <button class="btn btn--primario" data-acao="confirmar">Confirmar prazo</button>
       <button class="btn" data-acao="ignorar">Não é prazo</button>` : '',
-    `${p.diario || ''} · publicada em ${fmtData(p.dataPublicacao)}`)}
+    `${p.diario || ''} · publicada em ${fmtData(p.dataPublicacao)}`, { voltar: 'publicacoes' })}
 
     ${p.status === 'pendente' ? `<div class="aviso aviso--atencao">
       ⚠️ PRAZO IDENTIFICADO AUTOMATICAMENTE — NECESSITA DE CONFIRMAÇÃO.

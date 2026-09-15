@@ -62,7 +62,8 @@ function fichaTarefa(id) {
     ${cabecalhoPagina(t.titulo, `
       ${t.status !== 'concluido' ? '<button class="btn btn--primario" data-acao="concluir">Concluir</button>' : ''}
       <button class="btn" data-acao="editar">Editar</button>
-      <button class="btn btn--perigo" data-acao="excluir">Excluir</button>`)}
+      <button class="btn btn--perigo" data-acao="excluir">Excluir</button>`,
+    '', { voltar: 'tarefas' })}
     <div class="cartao"><div class="cartao__corpo">
       <dl class="chave-valor">
         <dt>Prazo</dt><dd>${esc(fmtData(t.dataVencimento))}</dd>

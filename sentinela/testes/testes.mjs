@@ -958,4 +958,82 @@ teste('o teor alimenta a descrição objetiva enviada ao cliente', () => {
   assert.match(v.itens[0].resumo, /julgado procedente/);
 });
 
+console.log('\nCabeçalho das fichas');
+
+const { cabecalhoPagina } = await import('../src/ui/componentes.js');
+
+teste('a ficha oferece o caminho de volta para a listagem', () => {
+  const html = cabecalhoPagina('Processo', '', '', { voltar: 'processos' });
+  assert.match(html, /class="btn btn--fantasma voltar"/);
+  assert.match(html, /href="#\/processos"/);
+  assert.match(html, /aria-label="Voltar"/);
+});
+teste('listagem não exibe retorno, por não haver de onde voltar', () => {
+  assert.ok(!cabecalhoPagina('Processos').includes('voltar'));
+});
+
+console.log('\nDiagnóstico do teor');
+
+const { atualizarPeloTribunal: atualizar2 } = await import('../src/core/integracoes.js');
+const fetchTeor = globalThis.fetch;
+
+const processoTeor = db.inserir('processos', {
+  numeroCNJ: cnjValido(901), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+});
+
+const respostaComSentenca = {
+  ok: true, status: 200,
+  json: async () => ({ hits: { hits: [{ _source: {
+    numeroProcesso: cnjValido(901), tribunal: 'TJPE',
+    dataHoraUltimaAtualizacao: '2026-09-10T10:00:00.000Z',
+    movimentos: [{ codigo: 193, nome: 'Sentença', dataHora: '2026-05-20T16:00:00.000Z' }],
+  } }] } }),
+  text: async () => '{}',
+};
+
+// Diário sem publicação alguma do processo.
+globalThis.fetch = async (url) => (String(url).includes('datajud') || String(url).includes('_search')
+  ? respostaComSentenca
+  : { ok: true, status: 200, json: async () => ({ count: 0, items: [] }), text: async () => '{}' });
+const semPublicacao = await atualizar2(processoTeor.id);
+
+// Publicação existente, porém fora do intervalo entre o ato e a publicação.
+db.listar('movimentacoes', { processoId: processoTeor.id })
+  .forEach((m) => db.removerDefinitivo('movimentacoes', m.id));
+globalThis.fetch = async (url) => (String(url).includes('datajud') || String(url).includes('_search')
+  ? respostaComSentenca
+  : { ok: true, status: 200, text: async () => '{}',
+    json: async () => ({ count: 1, items: [{ numero_processo: cnjValido(901),
+      data_disponibilizacao: '2026-09-30', texto: 'Publicação muito posterior ao ato.' }] }) });
+const foraDoIntervalo = await atualizar2(processoTeor.id);
+
+// Diário indisponível.
+db.listar('movimentacoes', { processoId: processoTeor.id })
+  .forEach((m) => db.removerDefinitivo('movimentacoes', m.id));
+globalThis.fetch = async (url) => {
+  if (String(url).includes('datajud') || String(url).includes('_search')) return respostaComSentenca;
+  throw new TypeError('Failed to fetch');
+};
+const diarioMudo = await atualizar2(processoTeor.id);
+globalThis.fetch = fetchTeor;
+
+teste('sem publicação do processo, o motivo é dito por extenso', () => {
+  assert.equal(semPublicacao.ok, true);
+  assert.equal(semPublicacao.decisorios, 1);
+  assert.equal(semPublicacao.comTeor, 0);
+  assert.match(semPublicacao.motivoTeor, /não tem publicação alguma|segredo de justiça/i);
+});
+teste('publicação fora do intervalo é relatada como tal', () => {
+  assert.equal(foraDoIntervalo.comTeor, 0);
+  assert.match(foraDoIntervalo.motivoTeor, /intervalo esperado/i);
+  assert.match(foraDoIntervalo.motivoTeor, /à mão/i);
+});
+teste('falha de comunicação com o diário não é confundida com ausência de teor', () => {
+  assert.equal(diarioMudo.comTeor, 0);
+  assert.match(diarioMudo.motivoTeor, /diário não respondeu/i);
+});
+teste('a importação dos movimentos ocorre ainda que o teor falhe', () => {
+  assert.equal(diarioMudo.importados, 1);
+});
+
 console.log(`\n${passou} verificações concluídas.`);

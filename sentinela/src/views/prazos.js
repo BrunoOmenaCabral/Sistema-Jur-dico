@@ -103,7 +103,7 @@ export function fichaPrazo(id) {
       <button class="btn" data-acao="editar">Editar</button>
       <button class="btn" data-acao="duplicar">Duplicar</button>
       <button class="btn btn--perigo" data-acao="excluir">Excluir</button>`,
-    p.descricao || '')}
+    p.descricao || '', { voltar: 'prazos' })}
 
     <div class="grade grade--2">
       <section class="cartao"><div class="cartao__corpo">
