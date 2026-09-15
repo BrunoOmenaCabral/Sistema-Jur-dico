@@ -69,6 +69,11 @@ export async function consultarPorOAB({ numeroOab, ufOab, de, ate, sinal = null 
     itensPorPagina: '50',
   });
 
+  return requisitar(parametros, sinal);
+}
+
+/** Uma requisição ao serviço, com o tratamento de falha que ele exige. */
+async function requisitar(parametros, sinal) {
   let resposta;
   try {
     // Pelo repasse o caminho é a própria rota; direto, é o recurso do CNJ.
@@ -108,6 +113,24 @@ export async function consultarPorOAB({ numeroOab, ufOab, de, ate, sinal = null 
 }
 
 const falha = (motivo) => ({ ok: false, motivo, comunicacoes: [], total: 0 });
+
+/**
+ * Consulta as comunicações de um processo específico.
+ *
+ * Serve para recuperar o teor dos atos: o DataJud informa que houve sentença,
+ * mas não o que ela diz. O texto está na intimação publicada no diário.
+ */
+export async function consultarPorProcesso({ numeroProcesso, de = null, ate = null, sinal = null }) {
+  const numero = cnjDigitos(numeroProcesso);
+  if (numero.length !== 20) return falha('Número CNJ inválido.');
+
+  const parametros = new URLSearchParams({ numeroProcesso: numero });
+  if (de) parametros.set('dataDisponibilizacaoInicio', de);
+  if (ate) parametros.set('dataDisponibilizacaoFim', ate);
+  parametros.set('itensPorPagina', '50');
+
+  return requisitar(parametros, sinal);
+}
 
 /**
  * Converte uma comunicação do DJEN em publicação do sistema, no formato que

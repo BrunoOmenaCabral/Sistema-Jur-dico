@@ -429,3 +429,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .codigo-recuperacao { font-size: 1.25rem; letter-spacing: .12em; text-align: center;
   padding: .8rem; border: 1px dashed var(--linha); border-radius: var(--r);
   background: var(--surface-2); user-select: all; }
+
+/* Teor do ato na linha do tempo ----------------------------------------- */
+.teor { margin-top: .35rem; }
+.teor > summary { cursor: pointer; color: var(--marca-2); }
+.teor__corpo { margin: .4rem 0; padding: .6rem .7rem; border-left: 2px solid var(--c-publicacao);
+  background: var(--surface-2); border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  font-size: .82rem; line-height: 1.55; max-height: 22rem; overflow: auto; white-space: pre-wrap; }
+.selo--publicacao { background: var(--c-publicacao); color: #fff; }

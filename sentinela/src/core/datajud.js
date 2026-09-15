@@ -173,6 +173,19 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
 const falha = (motivo) => ({ ok: false, motivo, processo: null, movimentos: [], indice: null });
 
 /**
+ * Atos que carregam conteúdo decisório e por isso merecem ter o teor buscado.
+ *
+ * A classificação usa o nome do movimento, que vem da tabela processual
+ * unificada do CNJ e é a mesma em todos os tribunais. Juntada, distribuição e
+ * conclusão não entram: são andamento, não decisão.
+ */
+export function ehAtoDecisorio(movimento) {
+  const nome = String(movimento?.nome || movimento?.titulo || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return /despacho|decisao|sentenca|acordao|julgamento|homologa|liminar|tutela/.test(nome);
+}
+
+/**
  * Converte um movimento do DataJud em registro da linha do tempo.
  *
  * O complemento tabelado é o que dá sentido ao movimento: "Audiência" sozinho

@@ -398,8 +398,14 @@ export function linhaDoTempo(processoId) {
     add(d.criadoEm?.slice(0, 10), 'documento', `Documento — ${d.categoria}`, d.nome, `#/documentos`);
   }
   for (const m of db.listar('movimentacoes', { processoId })) {
-    add(m.data, 'movimentacao', m.titulo || 'Movimentação', m.descricao, null,
-      { origem: m.origem || 'andamento processual', editavel: true, registroId: m.id });
+    add(m.data, 'movimentacao', m.titulo || 'Movimentação', m.descricao, null, {
+      origem: m.origem || 'andamento processual',
+      editavel: true,
+      registroId: m.id,
+      teor: m.teor || null,
+      linkTeor: m.linkTeor || null,
+      fonteTeor: m.fonteTeor || null,
+    });
   }
   for (const c of db.listar('comunicacoes', { processoId })) {
     add((c.enviadoEm || '').slice(0, 10), 'comunicacao',

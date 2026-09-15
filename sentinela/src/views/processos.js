@@ -193,8 +193,15 @@ export function fichaProcesso(id) {
             <button class="btn btn--pequeno btn--perigo" data-excluir-mov="${esc(t.registroId)}">Excluir</button>
           </span>` : ''}
         </div>
-        <div class="timeline__titulo" ${t.rota ? `data-rota="${esc(t.rota)}" style="cursor:pointer"` : ''}>${esc(t.titulo)}</div>
+        <div class="timeline__titulo" ${t.rota ? `data-rota="${esc(t.rota)}" style="cursor:pointer"` : ''}>${esc(t.titulo)}
+          ${t.teor ? '<span class="selo selo--publicacao">teor disponível</span>' : ''}</div>
         ${t.detalhe ? `<div class="timeline__detalhe quebra">${esc(String(t.detalhe).slice(0, 400))}</div>` : ''}
+        ${t.teor ? `<details class="teor">
+          <summary class="mini">Ler o teor do ato</summary>
+          <div class="teor__corpo quebra">${esc(t.teor)}</div>
+          <div class="mini mudo">${esc(t.fonteTeor || '')}
+            ${t.linkTeor ? `· <a href="${esc(t.linkTeor)}" target="_blank" rel="noopener">inteiro teor no CNJ</a>` : ''}</div>
+        </details>` : ''}
       </li>`).join('')}</ul>` : '<div class="vazio">Sem registros na linha do tempo.</div>',
 
     prazos: () => listaEventos(prazos.map((x) => ({ ...x, tipoRegistro: 'prazo', data: x.dataVencimento,
@@ -292,7 +299,7 @@ export function abrirFormularioMovimentacao(valores = {}, aoConcluir) {
       ] },
     { nome: 'titulo', rotulo: 'Movimentação', tipo: 'text', obrigatorio: true, largura: 3,
       ajuda: 'Ex.: Decisão publicada, Juntada de petição, Conclusos para sentença.' },
-    { nome: 'descricao', rotulo: 'Teor', tipo: 'textarea', largura: 3,
+    { nome: 'teor', rotulo: 'Teor', tipo: 'textarea', largura: 3,
       ajuda: 'Texto do despacho ou da decisão. É a partir dele que o sistema descreve a novidade ao cliente.' },
   ];
 
@@ -534,6 +541,8 @@ export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
           qs('#dj-resultado', corpo).innerHTML = `
             <div class="aviso aviso--ok">${r.importados} movimento(s) acrescentado(s) à linha do tempo.</div>
             <div class="mini mudo">${r.total} movimento(s) no tribunal · ${r.repetidos} já constavam.</div>
+            ${r.decisorios ? `<div class="mini mudo">${r.decisorios} ato(s) decisório(s) ·
+              ${r.comTeor} com o teor recuperado do diário oficial.</div>` : ''}
             ${r.complementados.length
     ? `<div class="mini mudo">Capa complementada: ${esc(r.complementados.join(', '))}.</div>` : ''}
             <div class="mini mudo">Classe: ${esc(r.capa.classe || '—')} · Órgão: ${esc(r.capa.vara || '—')}</div>`;

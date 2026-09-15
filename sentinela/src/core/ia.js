@@ -239,9 +239,11 @@ export function novidadesDoProcesso(processoId, { desde = null, limite = 12 } = 
   }
   for (const mov of db.listar('movimentacoes', { processoId })) {
     if (!mov.data || (corte && mov.data <= corte)) continue;
-    const analise = analisarAndamento(`${mov.titulo || ''} ${mov.descricao || ''}`);
+    // O teor do ato, quando foi possível obtê-lo, descreve melhor que o rótulo.
+    const conteudo = mov.teor || mov.descricao || '';
+    const analise = analisarAndamento(`${mov.titulo || ''} ${conteudo}`);
     itens.push({ data: mov.data, origem: mov.origem === 'manual' ? 'registro interno' : 'andamento processual',
-      ...analise, fonte: mov.descricao || mov.titulo });
+      ...analise, fonte: conteudo || mov.titulo });
   }
 
   itens.sort((a, b) => String(b.data).localeCompare(String(a.data)));

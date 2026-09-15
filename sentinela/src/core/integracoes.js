@@ -7,12 +7,12 @@
 // abre o WhatsApp Web, o cliente de e-mail ou gera o arquivo para download.
 
 import { db } from './store.js';
-import { fmtCNJ, fmtData, iso, hoje, addDays, uid, norm, cnjDigitos } from './util.js';
+import { fmtCNJ, fmtData, iso, hoje, addDays, diffDias, uid, norm, cnjDigitos } from './util.js';
 import { processoDe, clienteDe, nomeCliente } from './dominio.js';
 import { interpretarPublicacao, extrairNumerosCNJ } from './ia.js';
-import { consultarPorOAB as consultarDJEN, agruparEmProcessos, comunicacaoComoPublicacao,
-  parsearOAB } from './djen.js';
-import { consultarProcesso as consultarDataJud } from './datajud.js';
+import { consultarPorOAB as consultarDJEN, consultarPorProcesso as consultarDJENProcesso,
+  agruparEmProcessos, comunicacaoComoPublicacao, parsearOAB } from './djen.js';
+import { consultarProcesso as consultarDataJud, ehAtoDecisorio } from './datajud.js';
 
 /* -------------------------------------------------------------- arquivo -- */
 
@@ -346,6 +346,59 @@ export const tribunais = {
   },
 };
 
+// Janela entre o ato e a publicação da intimação correspondente. O diário sai
+// depois do ato, nunca antes, e o intervalo raramente passa de duas semanas.
+const DIAS_ATE_PUBLICACAO = 20;
+
+/**
+ * Acopla a cada ato decisório o texto da intimação que o publicou.
+ *
+ * O DataJud informa que houve sentença, mas não o que ela diz: a base guarda
+ * metadados do movimento, não o documento. O teor está na comunicação
+ * publicada no diário, e é de lá que vem.
+ *
+ * O casamento é por proximidade de data, com a publicação sempre posterior ao
+ * ato. Quando há mais de uma candidata, prevalece a mais próxima.
+ */
+export function acoplarTeor(movimentos, comunicacoes) {
+  const candidatas = comunicacoes
+    .map((c) => ({
+      data: normalizarDataDJEN(c.data_disponibilizacao || c.datadisponibilizacao),
+      texto: String(c.texto || '').trim(),
+      link: c.link || '',
+      tipo: c.tipoComunicacao || '',
+    }))
+    .filter((c) => c.data && c.texto);
+
+  let acoplados = 0;
+  const saida = movimentos.map((movimento) => {
+    if (!ehAtoDecisorio(movimento)) return movimento;
+
+    const escolhida = candidatas
+      .filter((c) => c.data >= movimento.data && diffDias(movimento.data, c.data) <= DIAS_ATE_PUBLICACAO)
+      .sort((a, b) => diffDias(movimento.data, a.data) - diffDias(movimento.data, b.data))[0];
+    if (!escolhida) return movimento;
+
+    acoplados += 1;
+    return {
+      ...movimento,
+      teor: escolhida.texto,
+      linkTeor: escolhida.link,
+      fonteTeor: `Diário de Justiça Eletrônico Nacional, publicado em ${fmtData(escolhida.data)}`,
+    };
+  });
+
+  return { movimentos: saida, acoplados, candidatas: candidatas.length };
+}
+
+const normalizarDataDJEN = (valor) => {
+  if (!valor) return null;
+  const texto = String(valor);
+  if (/^\d{4}-\d{2}-\d{2}/.test(texto)) return texto.slice(0, 10);
+  const br = texto.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  return br ? `${br[3]}-${br[2]}-${br[1]}` : null;
+};
+
 /**
  * Traz para a linha do tempo os movimentos que o tribunal já registrou.
  *
@@ -365,11 +418,30 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
   });
   if (!r.ok) return { ok: false, motivo: r.motivo, importados: 0 };
 
+  // Havendo ato decisório, busca-se no diário o texto que o publicou.
+  let movimentos = r.movimentos;
+  let comTeor = 0;
+  const decisorios = movimentos.filter(ehAtoDecisorio).length;
+  if (decisorios) {
+    const primeiro = movimentos.find(ehAtoDecisorio)?.data;
+    const diario = await consultarDJENProcesso({
+      numeroProcesso: processo.numeroCNJ,
+      de: primeiro ? addDays(primeiro, -1) : null,
+      ate: hoje(),
+      sinal,
+    });
+    if (diario.ok) {
+      const r2 = acoplarTeor(movimentos, diario.comunicacoes);
+      movimentos = r2.movimentos;
+      comTeor = r2.acoplados;
+    }
+  }
+
   const existentes = new Set(db.listar('movimentacoes', { processoId })
     .map((m) => m.chaveExterna).filter(Boolean));
 
   let importados = 0;
-  for (const movimento of r.movimentos) {
+  for (const movimento of movimentos) {
     if (existentes.has(movimento.chaveExterna)) continue;
     existentes.add(movimento.chaveExterna);
     db.inserir('movimentacoes', { ...movimento, processoId }, 'Movimento importado do tribunal');
@@ -390,8 +462,10 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
     motivo: null,
     indice: r.indice,
     importados,
-    total: r.movimentos.length,
-    repetidos: r.movimentos.length - importados,
+    total: movimentos.length,
+    repetidos: movimentos.length - importados,
+    decisorios,
+    comTeor,
     capa: r.processo,
     complementados: Object.keys(completar),
   };

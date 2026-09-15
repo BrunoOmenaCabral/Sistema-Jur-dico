@@ -890,4 +890,72 @@ teste('o modo de repasse acompanha a ponte', () => {
   assert.equal(usandoRepasse(), false);
 });
 
+console.log('\nTeor dos atos decisórios');
+
+const { ehAtoDecisorio } = await import('../src/core/datajud.js');
+const { acoplarTeor } = await import('../src/core/integracoes.js');
+
+teste('distingue ato decisório de andamento comum', () => {
+  for (const n of ['Despacho', 'Decisão', 'Sentença', 'Acórdão', 'Julgamento', 'Homologação']) {
+    assert.equal(ehAtoDecisorio({ nome: n }), true, n);
+  }
+  for (const n of ['Juntada', 'Distribuição', 'Conclusão', 'Audiência', 'Documento']) {
+    assert.equal(ehAtoDecisorio({ nome: n }), false, n);
+  }
+});
+
+const MOVS = [
+  { data: '2026-03-10', titulo: 'Sentença' },
+  { data: '2026-04-01', titulo: 'Juntada' },
+  { data: '2026-05-05', titulo: 'Despacho' },
+  { data: '2026-06-01', titulo: 'Decisão' },
+];
+const COMS = [
+  { data_disponibilizacao: '2026-03-12', texto: 'Julgo procedente o pedido.', link: 'https://x/1' },
+  { data_disponibilizacao: '2026-03-18', texto: 'Republicação da sentença.' },
+  { data_disponibilizacao: '2026-05-07', texto: 'Manifeste-se em 15 dias.' },
+  { data_disponibilizacao: '2026-04-02', texto: 'Intimação de juntada.' },
+];
+const acoplado = acoplarTeor(MOVS, COMS);
+const porTitulo = Object.fromEntries(acoplado.movimentos.map((m) => [m.titulo, m]));
+
+teste('o ato decisório recebe o texto da intimação que o publicou', () => {
+  assert.equal(porTitulo['Sentença'].teor, 'Julgo procedente o pedido.');
+  assert.equal(porTitulo['Sentença'].linkTeor, 'https://x/1');
+  assert.match(porTitulo['Sentença'].fonteTeor, /12\/03\/2026/);
+  assert.equal(porTitulo['Despacho'].teor, 'Manifeste-se em 15 dias.');
+  assert.equal(acoplado.acoplados, 2);
+});
+teste('prevalece a publicação mais próxima do ato', () => {
+  assert.notEqual(porTitulo['Sentença'].teor, 'Republicação da sentença.');
+});
+teste('andamento comum não recebe teor, ainda que haja publicação na data', () => {
+  assert.equal(porTitulo['Juntada'].teor, undefined);
+});
+teste('ato sem publicação no intervalo fica sem teor, e não pega o de outro', () => {
+  assert.equal(porTitulo['Decisão'].teor, undefined);
+});
+teste('publicação anterior ao ato nunca é usada', () => {
+  const r = acoplarTeor([{ data: '2026-06-10', titulo: 'Sentença' }],
+    [{ data_disponibilizacao: '2026-06-01', texto: 'Anterior ao ato.' }]);
+  assert.equal(r.acoplados, 0);
+});
+teste('aceita data de publicação no formato brasileiro', () => {
+  const r = acoplarTeor([{ data: '2026-07-01', titulo: 'Decisão' }],
+    [{ data_disponibilizacao: '03/07/2026', texto: 'Defiro.' }]);
+  assert.equal(r.movimentos[0].teor, 'Defiro.');
+});
+teste('o teor alimenta a descrição objetiva enviada ao cliente', () => {
+  const alvoProcesso = db.inserir('processos', {
+    numeroCNJ: cnjValido(801), clienteId: processo.clienteId, status: 'ativo',
+  });
+  db.inserir('movimentacoes', { processoId: alvoProcesso.id, data: hoje(),
+    titulo: 'Sentença', teor: 'Julgo procedente o pedido e condeno a ré.',
+    origem: 'andamento processual' });
+  const v = novidadesDoProcesso(alvoProcesso.id, { desde: addDays(hoje(), -5) });
+  assert.equal(v.itens.length, 1);
+  assert.equal(v.itens[0].confiavel, true);
+  assert.match(v.itens[0].resumo, /julgado procedente/);
+});
+
 console.log(`\n${passou} verificações concluídas.`);
