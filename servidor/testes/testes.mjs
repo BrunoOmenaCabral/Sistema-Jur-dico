@@ -25,6 +25,22 @@ const PORTA_CNJ = PORTA + 1;
 const cnjFalso = createServer((req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORTA_CNJ}`);
   ultimaConsultaCNJ = url.search;
+  if (url.pathname.endsWith('/_search')) {
+    ultimaConsultaDataJud = { caminho: url.pathname, autorizacao: req.headers.authorization, corpo: '' };
+    let bruto = '';
+    req.on('data', (p) => { bruto += p; });
+    return req.on('end', () => {
+      ultimaConsultaDataJud.corpo = bruto;
+      if (url.pathname.includes('inexistente')) { res.writeHead(404); return res.end('{}'); }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ hits: { hits: [{ _source: {
+        numeroProcesso: '00001010820268170001', tribunal: 'TJPE',
+        classe: { nome: 'Procedimento Comum' }, orgaoJulgador: { nome: '3ª Vara' },
+        dataHoraUltimaAtualizacao: '2026-09-10T10:00:00.000Z',
+        movimentos: [{ codigo: 26, nome: 'Distribuição', dataHora: '2026-01-15T09:00:00.000Z' }],
+      } }] } }));
+    });
+  }
   if (url.pathname !== '/comunicacao') { res.writeHead(404); return res.end(); }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ status: 'success', count: 1, items: [{
@@ -33,6 +49,7 @@ const cnjFalso = createServer((req, res) => {
   }] }));
 });
 let ultimaConsultaCNJ = '';
+let ultimaConsultaDataJud = null;
 cnjFalso.listen(PORTA_CNJ, '127.0.0.1');
 process.on('exit', () => cnjFalso.close());
 
@@ -42,7 +59,9 @@ const processo = spawn(process.execPath,
   [...opcoes, join(raiz, 'servidor', 'src', 'principal.js')], {
     env: { ...process.env, PORTA: String(PORTA), SENTINELA_DADOS: dados,
       SENTINELA_ADMIN_SENHA: SENHA_ADMIN, SENTINELA_ADMIN_EMAIL: 'admin@teste.adv.br',
-      SENTINELA_DJEN_BASE: `http://127.0.0.1:${PORTA_CNJ}` },
+      SENTINELA_DJEN_BASE: `http://127.0.0.1:${PORTA_CNJ}`,
+      SENTINELA_DATAJUD_BASE: `http://127.0.0.1:${PORTA_CNJ}`,
+      SENTINELA_DATAJUD_CHAVE: 'chave-do-servidor' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 const linhasDoServidor = [];
@@ -306,6 +325,32 @@ await teste('encaminha apenas os parâmetros previstos', async () => {
 await teste('recusa consulta sem OAB nem número de processo', async () => {
   const r = await admin.req('GET', '/api/djen/comunicacao?ufOab=PE');
   assert.equal(r.status, 400);
+});
+
+console.log('\nConsulta de movimentos ao tribunal');
+await teste('repassa a consulta ao DataJud com a chave do servidor', async () => {
+  const r = await admin.req('POST', '/api/datajud/api_publica_tjpe/_search',
+    { query: { match: { numeroProcesso: '00001010820268170001' } } });
+  assert.equal(r.status, 200);
+  assert.equal(r.dados.hits.hits[0]._source.tribunal, 'TJPE');
+  assert.equal(ultimaConsultaDataJud.autorizacao, 'APIKey chave-do-servidor');
+  assert.match(ultimaConsultaDataJud.caminho, /api_publica_tjpe/);
+});
+await teste('a chave enviada pelo cliente é descartada', async () => {
+  await admin.req('POST', '/api/datajud/api_publica_tjpe/_search',
+    { query: { match: { numeroProcesso: '00001010820268170001' } }, chave: 'forjada' });
+  assert.equal(ultimaConsultaDataJud.autorizacao, 'APIKey chave-do-servidor');
+  assert.ok(!ultimaConsultaDataJud.corpo.includes('forjada'));
+});
+await teste('recusa consulta sem número CNJ completo', async () => {
+  const r = await admin.req('POST', '/api/datajud/api_publica_tjpe/_search',
+    { query: { match: { numeroProcesso: '123' } } });
+  assert.equal(r.status, 400);
+});
+await teste('índice inexistente devolve 404 ao cliente', async () => {
+  const r = await admin.req('POST', '/api/datajud/api_publica_inexistente/_search',
+    { query: { match: { numeroProcesso: '00001010820268170001' } } });
+  assert.equal(r.status, 404);
 });
 
 console.log('\nAlteração de acesso e redefinição de senha');

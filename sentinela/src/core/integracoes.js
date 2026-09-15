@@ -12,6 +12,7 @@ import { processoDe, clienteDe, nomeCliente } from './dominio.js';
 import { interpretarPublicacao, extrairNumerosCNJ } from './ia.js';
 import { consultarPorOAB as consultarDJEN, agruparEmProcessos, comunicacaoComoPublicacao,
   parsearOAB } from './djen.js';
+import { consultarProcesso as consultarDataJud } from './datajud.js';
 
 /* -------------------------------------------------------------- arquivo -- */
 
@@ -344,6 +345,57 @@ export const tribunais = {
     return { importados, arquivados, duplicados, invalidos };
   },
 };
+
+/**
+ * Traz para a linha do tempo os movimentos que o tribunal já registrou.
+ *
+ * A fonte é o DataJud, onde cada tribunal alimenta a capa e o andamento a
+ * partir do próprio sistema. Serve ao processo cadastrado à mão, que entra no
+ * sistema sem histórico algum, e à conferência do que foi perdido.
+ *
+ * Movimento já importado não entra de novo: a chave de origem identifica cada
+ * um. O que foi lançado à mão pelo escritório permanece intocado.
+ */
+export async function atualizarPeloTribunal(processoId, { indice = null, sinal = null } = {}) {
+  const processo = processoDe(processoId);
+  if (!processo) return { ok: false, motivo: 'Processo não encontrado.', importados: 0 };
+
+  const r = await consultarDataJud({
+    numeroCNJ: processo.numeroCNJ, tribunal: processo.tribunal, indice, sinal,
+  });
+  if (!r.ok) return { ok: false, motivo: r.motivo, importados: 0 };
+
+  const existentes = new Set(db.listar('movimentacoes', { processoId })
+    .map((m) => m.chaveExterna).filter(Boolean));
+
+  let importados = 0;
+  for (const movimento of r.movimentos) {
+    if (existentes.has(movimento.chaveExterna)) continue;
+    existentes.add(movimento.chaveExterna);
+    db.inserir('movimentacoes', { ...movimento, processoId }, 'Movimento importado do tribunal');
+    importados += 1;
+  }
+
+  // Campos da capa que o cadastro manual costuma deixar em branco.
+  const completar = {};
+  for (const campo of ['tribunal', 'classe', 'assunto', 'vara', 'dataDistribuicao']) {
+    if (!processo[campo] && r.processo[campo]) completar[campo] = r.processo[campo];
+  }
+  if (Object.keys(completar).length) {
+    db.atualizar('processos', processoId, completar, 'Capa complementada pela consulta ao tribunal');
+  }
+
+  return {
+    ok: true,
+    motivo: null,
+    indice: r.indice,
+    importados,
+    total: r.movimentos.length,
+    repetidos: r.movimentos.length - importados,
+    capa: r.processo,
+    complementados: Object.keys(completar),
+  };
+}
 
 /**
  * Lê uma lista de processos colada ou exportada do tribunal.

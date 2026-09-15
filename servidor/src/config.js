@@ -35,6 +35,13 @@ export const config = {
     chave: process.env.SENTINELA_EMAIL_CHAVE || '',
     remetente: process.env.SENTINELA_EMAIL_REMETENTE || '',
   },
+  // DataJud: base pública do CNJ com a capa e os movimentos dos tribunais.
+  // A chave é pública, divulgada pelo próprio CNJ, e pode ser trocada por
+  // ambiente caso o Conselho a rotacione.
+  datajudBase: (process.env.SENTINELA_DATAJUD_BASE
+    || 'https://api-publica.datajud.cnj.jus.br').replace(/\/$/, ''),
+  datajudChave: process.env.SENTINELA_DATAJUD_CHAVE
+    || 'cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==',
   // Endereço público do sistema, usado no link enviado por e-mail.
   enderecoPublico: (process.env.SENTINELA_ENDERECO || '').replace(/\/$/, ''),
   minutosRecuperacao: Number(process.env.SENTINELA_RECUPERACAO_MINUTOS || 30),

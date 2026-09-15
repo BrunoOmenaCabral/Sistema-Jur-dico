@@ -666,4 +666,117 @@ teste('senha curta é recusada na recuperação', () => {
   assert.match(senhaCurta.message, /8 caracteres/);
 });
 
+console.log('\nConsulta de movimentos ao tribunal (DataJud)');
+
+const { indiceDoProcesso, movimentoComoRegistro, consultarProcesso, INDICES } =
+  await import('../src/core/datajud.js');
+const { atualizarPeloTribunal } = await import('../src/core/integracoes.js');
+
+teste('deduz o índice do tribunal pelo número do processo', () => {
+  assert.equal(indiceDoProcesso({ numeroCNJ: '0000101-08.2026.8.17.0001' }), 'tjpe');
+  assert.equal(indiceDoProcesso({ numeroCNJ: '1000000-00.2024.8.26.0100' }), 'tjsp');
+  assert.equal(indiceDoProcesso({ numeroCNJ: '0000001-00.2024.8.07.0001' }), 'tjdft');
+  assert.equal(indiceDoProcesso({ numeroCNJ: '00008323520184013202' }), 'trf1');
+  assert.equal(indiceDoProcesso({ numeroCNJ: '0000001-00.2024.5.06.0001' }), 'trt6');
+});
+teste('a sigla informada no cadastro tem precedência sobre o número', () => {
+  assert.equal(indiceDoProcesso({ numeroCNJ: '0000101-08.2026.8.17.0001', tribunal: 'TJSP' }), 'tjsp');
+});
+teste('número inválido não produz índice', () => {
+  assert.equal(indiceDoProcesso({ numeroCNJ: '123' }), null);
+  assert.ok(INDICES.includes('tjpe') && INDICES.includes('trt24'));
+});
+teste('movimento do tribunal vira registro da linha do tempo', () => {
+  const r = movimentoComoRegistro({
+    codigo: 970, nome: 'Audiência', dataHora: '2026-03-10T14:06:24.000Z',
+    complementosTabelados: [{ nome: 'designada' }, { nome: 'conciliação' }],
+  }, { tribunal: 'TJPE' });
+  assert.equal(r.data, '2026-03-10');
+  assert.equal(r.titulo, 'Audiência');
+  assert.equal(r.descricao, 'designada · conciliação');
+  assert.equal(r.origem, 'andamento processual');
+  assert.match(r.chaveExterna, /^datajud:TJPE:970:/);
+});
+
+// O serviço é simulado: nenhum teste toca a rede.
+const fetchDataJud = globalThis.fetch;
+const respostaDataJud = (movimentos, extra = {}) => ({
+  ok: true, status: 200,
+  json: async () => ({ hits: { hits: [{ _source: {
+    numeroProcesso: '00001010820268170001', tribunal: 'TJPE', grau: 'G1',
+    classe: { nome: 'Procedimento Comum Cível' },
+    assuntos: [{ nome: 'Rescisão do contrato' }],
+    orgaoJulgador: { nome: '3ª Vara Cível do Recife' },
+    dataAjuizamento: '20260115000000',
+    dataHoraUltimaAtualizacao: '2026-09-10T10:00:00.000Z',
+    movimentos, ...extra,
+  } }] } }),
+});
+
+const MOVIMENTOS = [
+  { codigo: 26, nome: 'Distribuição', dataHora: '2026-01-15T09:00:00.000Z' },
+  { codigo: 581, nome: 'Documento', dataHora: '2026-02-02T11:00:00.000Z',
+    complementosTabelados: [{ nome: 'Petição inicial' }] },
+  { codigo: 970, nome: 'Audiência', dataHora: '2026-03-10T14:00:00.000Z',
+    complementosTabelados: [{ nome: 'designada' }] },
+  { codigo: 999, nome: 'Sem data', dataHora: null },
+];
+
+const processoManual = db.inserir('processos', {
+  numeroCNJ: '00001010820268170001', clienteId: processo.clienteId, status: 'ativo',
+});
+
+globalThis.fetch = async () => respostaDataJud(MOVIMENTOS);
+const primeira = await atualizarPeloTribunal(processoManual.id);
+const segunda = await atualizarPeloTribunal(processoManual.id);
+
+globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ hits: { hits: [] } }) });
+const semResultado = await atualizarPeloTribunal(processoManual.id);
+
+globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+const indiceInexistente = await consultarProcesso({ numeroCNJ: '00001010820268170001', indice: 'tjpe' });
+
+globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+const bloqueioOrigem = await consultarProcesso({ numeroCNJ: '00001010820268170001', indice: 'tjpe' });
+globalThis.fetch = fetchDataJud;
+
+teste('importa os movimentos do tribunal, descartando os sem data', () => {
+  assert.equal(primeira.ok, true);
+  assert.equal(primeira.importados, 3);
+  assert.equal(primeira.total, 3);
+  const linha = linhaDoTempo(processoManual.id).filter((i) => i.tipo === 'movimentacao');
+  assert.equal(linha.length, 3);
+  assert.ok(linha.every((i) => i.origem === 'andamento processual'));
+});
+teste('consulta repetida não duplica movimento já importado', () => {
+  assert.equal(segunda.importados, 0);
+  assert.equal(segunda.repetidos, 3);
+  assert.equal(db.listar('movimentacoes', { processoId: processoManual.id }).length, 3);
+});
+teste('a capa em branco é complementada pela consulta', () => {
+  const p = db.obter('processos', processoManual.id);
+  assert.equal(p.tribunal, 'TJPE');
+  assert.equal(p.vara, '3ª Vara Cível do Recife');
+  assert.equal(p.classe, 'Procedimento Comum Cível');
+  assert.equal(p.dataDistribuicao, '2026-01-15');
+  assert.ok(primeira.complementados.includes('tribunal'));
+});
+teste('processo ausente da base pública é informado, não silenciado', () => {
+  assert.equal(semResultado.ok, false);
+  assert.match(semResultado.motivo, /segredo de justiça|Nenhum processo encontrado/i);
+});
+teste('índice inexistente e bloqueio de origem são explicados', () => {
+  assert.equal(indiceInexistente.ok, false);
+  assert.match(indiceInexistente.motivo, /índice/i);
+  assert.equal(bloqueioOrigem.ok, false);
+  assert.match(bloqueioOrigem.motivo, /origem|servidor/i);
+});
+teste('os movimentos importados alimentam o relatório processual', () => {
+  const r = relatorioProcessual({ clienteId: processoManual.clienteId,
+    processoId: processoManual.id, desde: '2026-01-01' });
+  assert.equal(r.vazio, false);
+  assert.match(r.texto, /Movimentações do período:/);
+  assert.match(r.texto, /Audiência|Distribuição/);
+});
+
 console.log(`\n${passou} verificações concluídas.`);

@@ -106,6 +106,15 @@ trecho marcado como ponto de extensão:
 - `gerarICS` — exportação para Google, Apple e Outlook Calendar.
 - `core/ia.js` — `interpretarPublicacao` pode delegar a um modelo de linguagem
   mantendo o mesmo formato de retorno.
+- `core/datajud.js` — consulta pública do CNJ à capa e aos movimentos que cada
+  tribunal alimenta a partir do próprio sistema, em
+  `api-publica.datajud.cnj.jus.br/api_publica_<tribunal>/_search`. É a fonte
+  para reconstituir o andamento de processo cadastrado à mão, distinta do
+  diário de intimações. A chave é pública e divulgada pelo CNJ. O índice do
+  tribunal é deduzido do número CNJ, por tabela levantada consultando o próprio
+  serviço. O navegador não alcança a API diretamente, porque ela não autoriza
+  outra origem, de modo que a consulta passa por `/api/datajud` quando há
+  backend.
 - `core/djen.js` — consulta pública de comunicações do CNJ, em
   `comunicaapi.pje.jus.br/api/v1/comunicacao`, sem cadastro nem certificado.
   Aceita busca por OAB e seccional, e é dela que o sistema deduz em quais

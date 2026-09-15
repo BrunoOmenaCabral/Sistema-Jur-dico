@@ -21,6 +21,8 @@ import { abrirFormularioAudiencia } from './audiencias.js';
 import { abrirFormularioDocumento } from './documentos.js';
 import { abrirConsultaProcessual } from './primeiro-acesso.js';
 import { abrirFormularioCliente } from './clientes.js';
+import { atualizarPeloTribunal } from '../core/integracoes.js';
+import { INDICES, indiceDoProcesso } from '../core/datajud.js';
 
 let filtroProc = { status: 'ativo', busca: '', responsavelId: '' };
 
@@ -130,6 +132,7 @@ export function fichaProcesso(id) {
       <button class="btn" data-acao="tarefa">Nova tarefa</button>
       <button class="btn" data-acao="audiencia">Nova audiência</button>
       <button class="btn" data-acao="documento">Anexar documento</button>
+      <button class="btn" data-acao="tribunal">Atualizar pelo tribunal</button>
       <button class="btn" data-acao="movimentacao">Registrar movimentação</button>
       <button class="btn" data-acao="editar">Editar</button>
       ${['arquivado', 'encerrado'].includes(p.status)
@@ -234,6 +237,7 @@ export function fichaProcesso(id) {
   delegar(tela, 'click', '[data-acao="audiencia"]', () => abrirFormularioAudiencia({ processoId: id, clienteId: p.clienteId }, () => recarregar()));
   delegar(tela, 'click', '[data-acao="documento"]', () => abrirFormularioDocumento({ processoId: id, clienteId: p.clienteId }, () => recarregar()));
   delegar(tela, 'click', '[data-acao="editar"]', () => abrirFormularioProcesso(p, () => recarregar()));
+  delegar(tela, 'click', '[data-acao="tribunal"]', () => abrirAtualizacaoPeloTribunal(p, () => recarregar()));
   delegar(tela, 'click', '[data-acao="arquivar"]', () => abrirArquivamento(p, () => recarregar()));
   delegar(tela, 'click', '[data-acao="reativar"]', async () => {
     const ok = await confirmar({
@@ -481,4 +485,66 @@ export function abrirExclusao(processo, aoConcluir) {
       return true;
     },
   });
+}
+
+/* ------------------------------------- movimentos vindos do tribunal ----- */
+
+/**
+ * Traz o andamento que o tribunal já registrou.
+ *
+ * O processo cadastrado à mão entra sem histórico, e é este o caminho para
+ * reconstituí-lo. A fonte é o DataJud, base pública do CNJ alimentada por cada
+ * tribunal a partir do próprio sistema, distinta do diário de intimações.
+ */
+export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
+  const sugerido = indiceDoProcesso(processo);
+
+  const corpo = h(`<div class="pilha">
+    <p class="quebra">A consulta busca a capa e todos os movimentos que o tribunal publicou
+      para o processo <span class="mono">${esc(fmtCNJ(processo.numeroCNJ))}</span> e os
+      acrescenta à linha do tempo. Movimento já importado não entra de novo, e o que você
+      lançou à mão permanece como está.</p>
+
+    <div class="campo"><label for="dj-indice">Tribunal</label>
+      <select id="dj-indice">
+        ${INDICES.map((i) => `<option value="${i}" ${i === sugerido ? 'selected' : ''}>${i.toUpperCase()}</option>`).join('')}
+      </select>
+      <span class="campo__ajuda">${sugerido
+    ? 'Deduzido do número do processo. Altere se o processo tramitar em outro tribunal.'
+    : 'Não foi possível deduzir do número. Escolha o tribunal.'}</span></div>
+
+    <div id="dj-resultado"></div>
+  </div>`);
+
+  const ref = modal({
+    titulo: 'Atualizar pelo tribunal', conteudo: corpo, largo: true,
+    acoes: [
+      { rotulo: 'Fechar', aoClicar: (fechar) => fechar() },
+      { rotulo: 'Consultar', classe: 'btn--primario', aoClicar: async (_fechar, _corpo, botao) => {
+        botao.disabled = true;
+        const rotulo = botao.textContent;
+        botao.textContent = 'Consultando…';
+        qs('#dj-resultado', corpo).innerHTML = '<div class="mini mudo">Consultando o DataJud…</div>';
+        try {
+          const r = await atualizarPeloTribunal(processo.id, { indice: qs('#dj-indice', corpo).value });
+          if (!r.ok) {
+            qs('#dj-resultado', corpo).innerHTML = `<div class="aviso aviso--atencao quebra">${esc(r.motivo)}</div>`;
+            return;
+          }
+          qs('#dj-resultado', corpo).innerHTML = `
+            <div class="aviso aviso--ok">${r.importados} movimento(s) acrescentado(s) à linha do tempo.</div>
+            <div class="mini mudo">${r.total} movimento(s) no tribunal · ${r.repetidos} já constavam.</div>
+            ${r.complementados.length
+    ? `<div class="mini mudo">Capa complementada: ${esc(r.complementados.join(', '))}.</div>` : ''}
+            <div class="mini mudo">Classe: ${esc(r.capa.classe || '—')} · Órgão: ${esc(r.capa.vara || '—')}</div>`;
+          aviso(`${r.importados} movimento(s) importado(s) do tribunal.`, 'ok');
+          aoConcluir?.();
+        } finally {
+          botao.disabled = false;
+          botao.textContent = rotulo;
+        }
+      } },
+    ],
+  });
+  return ref;
 }

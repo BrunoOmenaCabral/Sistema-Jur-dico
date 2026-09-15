@@ -205,6 +205,38 @@ async function api(req, res, url) {
     }
   }
 
+  // Repasse da consulta de movimentos ao DataJud.
+  //
+  // O serviço do CNJ não autoriza chamada de outra origem, então o navegador
+  // sozinho não alcança. A chave usada é a do servidor, nunca a que o cliente
+  // mandar, e só o índice e o número do processo atravessam.
+  const datajudRota = rota.match(/^\/datajud\/(api_publica_[a-z0-9]+)\/_search$/);
+  if (datajudRota && metodo === 'POST') {
+    const corpo = await lerCorpo(req);
+    const numero = String(corpo?.query?.match?.numeroProcesso || '').replace(/\D/g, '');
+    if (numero.length !== 20) {
+      return responder(res, 400, { erro: 'Informe o número CNJ com 20 dígitos.' });
+    }
+    try {
+      const externa = await fetch(`${config.datajudBase}/${datajudRota[1]}/_search`, {
+        method: 'POST',
+        headers: {
+          Authorization: `APIKey ${config.datajudChave}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: { match: { numeroProcesso: numero } }, size: 10 }),
+        signal: AbortSignal.timeout(config.tempoLimiteConsultaMs),
+      });
+      if (!externa.ok) {
+        return responder(res, externa.status === 404 ? 404 : 502,
+          { erro: `O DataJud respondeu ${externa.status}.` });
+      }
+      return responder(res, 200, await externa.json());
+    } catch (e) {
+      return responder(res, 504, { erro: `Consulta ao DataJud não concluída: ${e.message}` });
+    }
+  }
+
   if (rota === '/estado' && metodo === 'GET') {
     const desde = url.searchParams.get('desde');
     return responder(res, 200, desde ? estadoDesde(desde) : estadoCompleto());
