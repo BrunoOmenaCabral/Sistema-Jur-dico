@@ -1,0 +1,5 @@
+# O Vercel publica apenas a interface. O backend em servidor/ precisa de
+# processo Node contínuo e disco persistente, que a plataforma não oferece
+# neste formato, e a pasta de dados nunca sai daqui.
+servidor/
+.github/
