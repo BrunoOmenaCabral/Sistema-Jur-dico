@@ -41,6 +41,12 @@ async function abrirSqlite() {
     );
     CREATE INDEX IF NOT EXISTS idx_auditoria_quando ON auditoria (quando);
     CREATE TABLE IF NOT EXISTS configuracoes (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
+    -- Pedidos de redefinição de senha. Guarda-se o resumo do token, nunca ele
+    -- próprio: quem ler o banco não consegue redefinir a senha de ninguém.
+    CREATE TABLE IF NOT EXISTS recuperacoes (
+      token_hash TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, expira TEXT NOT NULL,
+      criado_em TEXT NOT NULL
+    );
   `);
 
   const linhaParaRegistro = (l) => JSON.parse(l.dados);
@@ -81,6 +87,22 @@ async function abrirSqlite() {
         ON CONFLICT (usuario_id) DO UPDATE SET hash = excluded.hash, sal = excluded.sal,
         atualizado_em = excluded.atualizado_em`).run(usuarioId, hash, sal, new Date().toISOString());
     },
+    salvarRecuperacao(tokenHash, usuarioId, expira) {
+      // Um pedido em aberto por usuário: o novo invalida o anterior.
+      bd.prepare('DELETE FROM recuperacoes WHERE usuario_id = ?').run(usuarioId);
+      bd.prepare(`INSERT INTO recuperacoes (token_hash, usuario_id, expira, criado_em)
+        VALUES (?, ?, ?, ?)`).run(tokenHash, usuarioId, expira, new Date().toISOString());
+    },
+    recuperacao(tokenHash) {
+      const l = bd.prepare('SELECT usuario_id, expira FROM recuperacoes WHERE token_hash = ?').get(tokenHash);
+      return l ? { usuarioId: l.usuario_id, expira: l.expira } : null;
+    },
+    apagarRecuperacao(tokenHash) {
+      bd.prepare('DELETE FROM recuperacoes WHERE token_hash = ?').run(tokenHash);
+    },
+    limparRecuperacoesVencidas() {
+      bd.prepare('DELETE FROM recuperacoes WHERE expira < ?').run(new Date().toISOString());
+    },
     registrarAuditoria(e) {
       bd.prepare(`INSERT INTO auditoria (id, quando, usuario_id, usuario_nome, colecao,
         registro_id, acao, detalhe, antes, depois) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -114,8 +136,10 @@ async function abrirSqlite() {
 
 function abrirJson() {
   const arquivo = join(config.dadosDir, 'sentinela.json');
-  const vazio = { registros: {}, credenciais: {}, auditoria: [], configuracoes: null };
+  const vazio = { registros: {}, credenciais: {}, auditoria: [], configuracoes: null,
+    recuperacoes: {} };
   let estado = existsSync(arquivo) ? JSON.parse(readFileSync(arquivo, 'utf8')) : vazio;
+  estado.recuperacoes ||= {}; // base gravada antes desta função existir
 
   const salvar = () => {
     const temp = `${arquivo}.tmp`;
@@ -143,6 +167,22 @@ function abrirJson() {
     },
     credencial(usuarioId) { return estado.credenciais[usuarioId] || null; },
     salvarCredencial(usuarioId, hash, sal) { estado.credenciais[usuarioId] = { hash, sal }; salvar(); },
+    salvarRecuperacao(tokenHash, usuarioId, expira) {
+      for (const [chave, r] of Object.entries(estado.recuperacoes)) {
+        if (r.usuarioId === usuarioId) delete estado.recuperacoes[chave];
+      }
+      estado.recuperacoes[tokenHash] = { usuarioId, expira, criadoEm: new Date().toISOString() };
+      salvar();
+    },
+    recuperacao(tokenHash) { return estado.recuperacoes[tokenHash] || null; },
+    apagarRecuperacao(tokenHash) { delete estado.recuperacoes[tokenHash]; salvar(); },
+    limparRecuperacoesVencidas() {
+      const agora = new Date().toISOString();
+      for (const [chave, r] of Object.entries(estado.recuperacoes)) {
+        if (r.expira < agora) delete estado.recuperacoes[chave];
+      }
+      salvar();
+    },
     registrarAuditoria(e) { estado.auditoria.unshift(e); estado.auditoria.length = Math.min(estado.auditoria.length, 20000); salvar(); return e; },
     auditoria({ desde = null, limite = 500 } = {}) {
       return estado.auditoria.filter((a) => !desde || a.quando > desde).slice(0, limite);

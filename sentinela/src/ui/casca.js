@@ -2,8 +2,9 @@
 // central de notificações e navegação inferior no celular.
 
 import { h, qs, qsa, esc, aviso, modal, delegar } from './ui.js';
+import { modalFormulario } from './formulario.js';
 import { db, aoMudar, aoSincronizar, modoAtual, enviarFila } from '../core/store.js';
-import { usuarioAtual, sair, pode } from '../core/auth.js';
+import { usuarioAtual, sair, pode, alterarAcesso } from '../core/auth.js';
 import { buscaGlobal, indicadores, sincronizarNotificacoes } from '../core/dominio.js';
 import { debounce, fmtDataHora } from '../core/util.js';
 import { ir, rotaAtual } from './roteador.js';
@@ -220,6 +221,7 @@ function ligarAcoesTopo() {
         <div class="mini mudo">Último acesso: ${esc(fmtDataHora(u?.ultimoAcesso))}</div>
       </div>`,
       acoes: [
+        { rotulo: 'Alterar acesso', aoClicar: (fechar) => { fechar(); abrirAlteracaoDeAcesso(); } },
         { rotulo: 'Configurações', aoClicar: (fechar) => { fechar(); ir('configuracoes'); } },
         { rotulo: 'Sair', classe: 'btn--perigo', aoClicar: (fechar) => { fechar(); sair(); location.reload(); } },
       ],
@@ -267,6 +269,47 @@ export function abrirNotificacoes() {
         atualizarContadorNotificacoes();
         if (el.dataset.rota) { fechar(); ir(el.dataset.rota); }
       });
+    },
+  });
+}
+
+/**
+ * Alteração do próprio e-mail de acesso e da própria senha.
+ *
+ * A senha atual é exigida sempre, inclusive para trocar apenas o e-mail:
+ * sessão deixada aberta em máquina alheia não deve bastar para tomar a conta.
+ */
+export function abrirAlteracaoDeAcesso() {
+  const u = usuarioAtual();
+  if (!u) return;
+
+  modalFormulario({
+    titulo: 'Alterar acesso',
+    largo: true,
+    campos: [
+      { nome: 'email', rotulo: 'E-mail de acesso', tipo: 'email', obrigatorio: true, largura: 3 },
+      { nome: 'senhaAtual', rotulo: 'Senha atual', tipo: 'password', obrigatorio: true, largura: 3,
+        ajuda: 'Exigida para qualquer alteração, inclusive a do e-mail.' },
+      { nome: 'senhaNova', rotulo: 'Nova senha', tipo: 'password',
+        ajuda: 'Deixe em branco para manter a senha atual.' },
+      { nome: 'senhaNova2', rotulo: 'Repita a nova senha', tipo: 'password', largura: 2 },
+    ],
+    valores: { email: u.email || '' },
+    rotuloSalvar: 'Salvar',
+    aoSalvar: async ({ email, senhaAtual, senhaNova, senhaNova2 }, ctx) => {
+      if (senhaNova && senhaNova !== senhaNova2) {
+        ctx.avisos.innerHTML = '<div class="aviso aviso--alerta">As senhas não coincidem.</div>';
+        return false;
+      }
+      try {
+        await alterarAcesso({ email, senhaAtual, senhaNova: senhaNova || null });
+      } catch (e) {
+        ctx.avisos.innerHTML = `<div class="aviso aviso--alerta">${esc(e.message)}</div>`;
+        return false;
+      }
+      aviso('Acesso atualizado.', 'ok');
+      montarMenu();
+      return true;
     },
   });
 }

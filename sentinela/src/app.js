@@ -10,7 +10,7 @@ import { sincronizarNotificacoes } from './core/dominio.js';
 import { publicacoes as servicoPublicacoes } from './core/integracoes.js';
 import { registrar, iniciarRoteador, aoTrocarRota, renderizar } from './ui/roteador.js';
 import { montarCasca, atualizarNavegacao, atualizarContadorNotificacoes } from './ui/casca.js';
-import { telaLogin } from './views/login.js';
+import { telaLogin, telaRedefinicao } from './views/login.js';
 import { abrirConsultaProcessual } from './views/primeiro-acesso.js';
 import { aviso } from './ui/ui.js';
 
@@ -67,6 +67,18 @@ function registrarTelas() {
 
 async function iniciar() {
   aplicarTema();
+
+  // Link de redefinição recebido por e-mail: quem chega por ele não tem como
+  // entrar, então a tela vem antes de qualquer exigência de sessão.
+  const redefinicao = location.hash.match(/^#\/redefinir\/([A-Za-z0-9]+)$/);
+  if (redefinicao) {
+    if (await api.disponivel()) ativarModoServidor();
+    telaRedefinicao(redefinicao[1], () => {
+      aviso('Senha redefinida. Entre com a nova senha.', 'ok', 6000);
+      telaLogin(abrirAplicacao);
+    });
+    return;
+  }
 
   // Havendo backend nesta origem, ele é a fonte dos dados. Sem backend, o
   // sistema segue funcionando com a base do próprio navegador.

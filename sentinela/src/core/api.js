@@ -39,4 +39,7 @@ export const api = {
   salvarConfiguracoes: (configuracoes) => requisicao('PUT', '/configuracoes', configuracoes),
   criarUsuario: (dados) => requisicao('POST', '/usuarios', dados),
   definirSenha: (usuarioId, senha) => requisicao('PUT', `/usuarios/${usuarioId}/senha`, { senha }),
+  alterarAcesso: (usuarioId, dados) => requisicao('PUT', `/usuarios/${usuarioId}/acesso`, dados),
+  recuperar: (email) => requisicao('POST', '/recuperacao', { email }),
+  confirmarRecuperacao: (token, senha) => requisicao('POST', '/recuperacao/confirmar', { token, senha }),
 };

@@ -600,4 +600,70 @@ teste('excluir processo inexistente é recusado', () => {
   assert.throws(() => excluirProcesso('nao-existe'), /não encontrado/i);
 });
 
+console.log('\nAcesso: alteração e recuperação');
+
+const { registrarConta, alterarAcesso, recuperarComCodigo, autenticar, gerarCodigoRecuperacao,
+  usuarioAtual, sair } = await import('../src/core/auth.js');
+
+// Base limpa de usuários para exercitar o ciclo de acesso do começo.
+db.listar('usuarios').forEach((u) => db.removerDefinitivo('usuarios', u.id));
+const conta = await registrarConta({
+  nome: 'Bruno Omena Cabral', email: 'Bruno@Adv.BR', senha: 'senhaInicial1', oab: '12345/PE',
+});
+
+teste('criar conta entrega código de recuperação e normaliza o e-mail', () => {
+  assert.match(conta.codigoRecuperacao, /^[A-Z0-9]{4}(-[A-Z0-9]{4}){3}$/);
+  assert.equal(conta.email, 'bruno@adv.br');
+  // O código não fica legível na base: guarda-se apenas o resumo.
+  assert.ok(conta.codigoRecuperacaoHash);
+  assert.ok(!JSON.stringify(db.obter('usuarios', conta.id)).includes(conta.codigoRecuperacao));
+});
+teste('código de recuperação não se repete', () => {
+  assert.notEqual(gerarCodigoRecuperacao(), gerarCodigoRecuperacao());
+});
+
+const trocaSemSenha = await alterarAcesso({ email: 'novo@adv.br', senhaAtual: 'errada12345' })
+  .then(() => null).catch((e) => e);
+const trocaEmail = await alterarAcesso({ email: 'novo@adv.br', senhaAtual: 'senhaInicial1' });
+const trocaSenha = await alterarAcesso({ email: 'novo@adv.br', senhaAtual: 'senhaInicial1',
+  senhaNova: 'senhaTrocada1' });
+
+teste('senha atual incorreta impede a alteração', () => {
+  assert.ok(trocaSemSenha instanceof Error);
+  assert.match(trocaSemSenha.message, /senha atual/i);
+});
+teste('troca o e-mail de acesso', () => {
+  assert.equal(trocaEmail.email, 'novo@adv.br');
+});
+const senhaAntiga = await autenticar('novo@adv.br', 'senhaInicial1')
+  .then(() => null).catch((e) => e);
+teste('troca a senha e a antiga deixa de valer', () => {
+  assert.ok(trocaSenha);
+  assert.ok(senhaAntiga instanceof Error);
+});
+
+const entradaNova = await autenticar('novo@adv.br', 'senhaTrocada1');
+teste('entra com a senha nova', () => {
+  assert.equal(entradaNova.email, 'novo@adv.br');
+});
+
+const codigoErrado = await recuperarComCodigo('novo@adv.br', 'AAAA-BBBB-CCCC-DDDD', 'outraSenha1')
+  .then(() => null).catch((e) => e);
+const recuperado = await recuperarComCodigo('novo@adv.br', conta.codigoRecuperacao, 'senhaDoCodigo1');
+
+teste('código incorreto não redefine a senha', () => {
+  assert.ok(codigoErrado instanceof Error);
+  assert.match(codigoErrado.message, /código/i);
+});
+teste('código correto redefine a senha e já autentica', () => {
+  assert.ok(recuperado);
+  assert.equal(usuarioAtual().email, 'novo@adv.br');
+});
+const senhaCurta = await recuperarComCodigo('novo@adv.br', conta.codigoRecuperacao, 'abc')
+  .then(() => null).catch((e) => e);
+teste('senha curta é recusada na recuperação', () => {
+  assert.ok(senhaCurta instanceof Error);
+  assert.match(senhaCurta.message, /8 caracteres/);
+});
+
 console.log(`\n${passou} verificações concluídas.`);

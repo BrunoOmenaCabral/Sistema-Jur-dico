@@ -1,7 +1,7 @@
 // Regras do servidor: autenticação, autorização, validação das gravações,
 // auditoria e montagem do estado enviado ao navegador.
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { banco, COLECOES } from './banco.js';
 import { config } from './config.js';
 import { gerarHashSenha, senhaConfere } from './sessao.js';
@@ -69,6 +69,86 @@ export function autenticar(email, senha) {
   banco.gravar('usuarios', { ...u, ultimoAcesso: agora(), atualizadoEm: agora() });
   auditar(u, 'usuarios', u.id, 'acessou', 'Acesso ao sistema');
   return publicarUsuario(banco.obter('usuarios', u.id));
+}
+
+/**
+ * Alteração do próprio acesso: e-mail e senha.
+ *
+ * A senha atual é exigida de quem altera o próprio acesso, para que sessão
+ * esquecida em máquina alheia não sirva para tomar a conta. O administrador
+ * altera o de terceiros sem ela, porque já responde por isso.
+ */
+export function alterarAcesso(usuarioId, { email, senhaAtual, senhaNova }, autor) {
+  const u = usuarioPorId(usuarioId);
+  if (!u) throw new ErroDeUso('Usuário não encontrado.', 404);
+
+  const proprio = autor?.id === usuarioId;
+  if (!proprio && autor?.perfil !== 'admin') {
+    throw new ErroDeUso('Só o administrador altera o acesso de outro usuário.', 403);
+  }
+  if (proprio) {
+    const cred = banco.credencial(usuarioId);
+    if (!cred || !senhaConfere(String(senhaAtual || ''), cred.hash, cred.sal)) {
+      throw new ErroDeUso('Senha atual incorreta.', 401);
+    }
+  }
+
+  const mudancas = {};
+  if (email && normalizar(email) !== normalizar(u.email)) {
+    const ocupado = usuarioPorEmail(email);
+    if (ocupado && ocupado.id !== usuarioId) throw new ErroDeUso('Já existe usuário com este e-mail.');
+    mudancas.email = normalizar(email);
+  }
+  if (Object.keys(mudancas).length) {
+    const antes = publicarUsuario(u);
+    banco.gravar('usuarios', { ...u, ...mudancas, atualizadoEm: agora() });
+    auditar(autor, 'usuarios', usuarioId, 'alterou', 'E-mail de acesso alterado',
+      antes, publicarUsuario(banco.obter('usuarios', usuarioId)));
+  }
+  if (senhaNova) definirSenha(usuarioId, senhaNova, autor);
+
+  return { usuario: publicarUsuario(banco.obter('usuarios', usuarioId)) };
+}
+
+/* -------------------------------------------------------- recuperação ---- */
+
+const resumoToken = (token) => createHash('sha256').update(token).digest('hex');
+
+/**
+ * Abre um pedido de redefinição de senha.
+ *
+ * Devolve sempre a mesma coisa a quem chamou, exista ou não conta com o
+ * e-mail informado: dizer que o endereço não está cadastrado entregaria, a
+ * qualquer curioso, a lista de quem trabalha no escritório.
+ */
+export function solicitarRecuperacao(email) {
+  banco.limparRecuperacoesVencidas();
+  const u = usuarioPorEmail(email);
+  if (!u || u.ativo === false || u.excluidoEm) return { token: null, usuario: null };
+
+  const token = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
+  const expira = new Date(Date.now() + config.minutosRecuperacao * 60000).toISOString();
+  banco.salvarRecuperacao(resumoToken(token), u.id, expira);
+  auditar(u, 'usuarios', u.id, 'solicitou', 'Redefinição de senha solicitada');
+  return { token, usuario: publicarUsuario(u), expira };
+}
+
+/** Conclui a redefinição. O token vale uma vez e dentro do prazo. */
+export function redefinirComToken(token, senha) {
+  banco.limparRecuperacoesVencidas();
+  const pedido = banco.recuperacao(resumoToken(String(token || '')));
+  if (!pedido) throw new ErroDeUso('Link de redefinição inválido ou já utilizado.', 400);
+  if (pedido.expira < agora()) {
+    banco.apagarRecuperacao(resumoToken(String(token)));
+    throw new ErroDeUso('Link de redefinição expirado. Solicite outro.', 400);
+  }
+  const u = usuarioPorId(pedido.usuarioId);
+  if (!u) throw new ErroDeUso('Usuário não encontrado.', 404);
+
+  definirSenha(pedido.usuarioId, senha, u);
+  banco.apagarRecuperacao(resumoToken(String(token)));
+  auditar(u, 'usuarios', u.id, 'alterou', 'Senha redefinida por link enviado ao e-mail');
+  return { ok: true, email: u.email };
 }
 
 /* ------------------------------------------------------------ auditoria -- */

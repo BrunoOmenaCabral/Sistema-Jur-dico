@@ -28,6 +28,16 @@ export const config = {
   // Consulta pública de comunicações do CNJ, repassada pelo servidor.
   djenBase: (process.env.SENTINELA_DJEN_BASE || 'https://comunicaapi.pje.jus.br/api/v1').replace(/\/$/, ''),
   tempoLimiteConsultaMs: Number(process.env.SENTINELA_CONSULTA_TIMEOUT || 25000),
+  // Envio de e-mail por API HTTP do provedor. Sem isso, a redefinição de senha
+  // é criada mas não sai do servidor, e quem pediu é avisado disso.
+  email: {
+    endpoint: process.env.SENTINELA_EMAIL_ENDPOINT || '',
+    chave: process.env.SENTINELA_EMAIL_CHAVE || '',
+    remetente: process.env.SENTINELA_EMAIL_REMETENTE || '',
+  },
+  // Endereço público do sistema, usado no link enviado por e-mail.
+  enderecoPublico: (process.env.SENTINELA_ENDERECO || '').replace(/\/$/, ''),
+  minutosRecuperacao: Number(process.env.SENTINELA_RECUPERACAO_MINUTOS || 30),
 };
 
 if (!existsSync(config.dadosDir)) mkdirSync(config.dadosDir, { recursive: true });

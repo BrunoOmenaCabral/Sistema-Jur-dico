@@ -176,3 +176,22 @@ sqlite3 /var/lib/sentinela/sentinela.db ".backup '/backup/sentinela-$(date +%F).
 
 A exportação em JSON, dentro do sistema, serve como cópia adicional e para
 inspeção — não substitui o backup do arquivo do banco.
+
+## Redefinição de senha por e-mail
+
+O servidor envia o link de redefinição por API HTTP do provedor, sem
+dependência externa. O formato padrão é o da API do Resend, imitada pela
+maioria dos provedores modernos.
+
+| Variável | Conteúdo |
+| --- | --- |
+| `SENTINELA_EMAIL_ENDPOINT` | Endereço da API, por exemplo `https://api.resend.com/emails` |
+| `SENTINELA_EMAIL_CHAVE` | Chave de API do provedor |
+| `SENTINELA_EMAIL_REMETENTE` | Remetente verificado, por exemplo `contato@seudominio.adv.br` |
+| `SENTINELA_ENDERECO` | Endereço público do sistema, usado para montar o link |
+| `SENTINELA_RECUPERACAO_MINUTOS` | Validade do link, padrão 30 |
+
+Sem provedor configurado o pedido continua sendo aceito, mas o link não sai do
+servidor: ele é registrado no console, para que o administrador o entregue à
+pessoa. O token nunca é gravado em texto claro, apenas o resumo SHA-256, e vale
+uma única vez.

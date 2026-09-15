@@ -45,7 +45,12 @@ const processo = spawn(process.execPath,
       SENTINELA_DJEN_BASE: `http://127.0.0.1:${PORTA_CNJ}` },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-processo.stderr.on('data', (d) => { if (!/ExperimentalWarning|trace-warnings/.test(String(d))) process.stderr.write(d); });
+const linhasDoServidor = [];
+processo.stderr.on('data', (d) => {
+  linhasDoServidor.push(String(d));
+  if (!/ExperimentalWarning|trace-warnings/.test(String(d))) process.stderr.write(d);
+});
+processo.stdout.on('data', (d) => linhasDoServidor.push(String(d)));
 
 const encerrar = () => { processo.kill(); rmSync(dados, { recursive: true, force: true }); };
 process.on('exit', encerrar);
@@ -301,6 +306,68 @@ await teste('encaminha apenas os parâmetros previstos', async () => {
 await teste('recusa consulta sem OAB nem número de processo', async () => {
   const r = await admin.req('GET', '/api/djen/comunicacao?ufOab=PE');
   assert.equal(r.status, 400);
+});
+
+console.log('\nAlteração de acesso e redefinição de senha');
+await teste('usuário troca o próprio e-mail informando a senha atual', async () => {
+  const eu = (await admin.req('GET', '/api/sessao')).dados.usuario;
+  const r = await admin.req('PUT', `/api/usuarios/${eu.id}/acesso`,
+    { email: 'admin2@teste.adv.br', senhaAtual: SENHA_ADMIN });
+  assert.equal(r.status, 200);
+  assert.equal(r.dados.usuario.email, 'admin2@teste.adv.br');
+  // Volta ao endereço original para não afetar os testes seguintes.
+  await admin.req('PUT', `/api/usuarios/${eu.id}/acesso`,
+    { email: 'admin@teste.adv.br', senhaAtual: SENHA_ADMIN });
+});
+await teste('senha atual incorreta impede a alteração', async () => {
+  const eu = (await admin.req('GET', '/api/sessao')).dados.usuario;
+  const r = await admin.req('PUT', `/api/usuarios/${eu.id}/acesso`,
+    { email: 'outro@teste.adv.br', senhaAtual: 'errada12345' });
+  assert.equal(r.status, 401);
+});
+await teste('pedido de redefinição responde igual para e-mail existente e inexistente', async () => {
+  const a = await admin.req('POST', '/api/recuperacao', { email: 'admin@teste.adv.br' });
+  const b = await admin.req('POST', '/api/recuperacao', { email: 'ninguem@teste.adv.br' });
+  assert.equal(a.status, 200);
+  assert.equal(b.status, 200);
+  assert.equal(a.dados.mensagem, b.dados.mensagem);
+  // Nenhuma resposta entrega o token nem diz se a conta existe.
+  assert.ok(!JSON.stringify(a.dados).includes('token'));
+});
+await teste('token inválido é recusado', async () => {
+  const r = await admin.req('POST', '/api/recuperacao/confirmar',
+    { token: 'inexistente', senha: 'novaSenha123' });
+  assert.equal(r.status, 400);
+  assert.match(r.dados.erro, /inválido|utilizado/i);
+});
+await teste('token do e-mail redefine a senha e vale uma única vez', async () => {
+  // Sem provedor de e-mail, o servidor registra o link no console; o teste lê
+  // o token da mesma origem que o administrador leria.
+  // Conta própria para o teste: as anteriores podem ter sido desativadas, e
+  // usuário inativo não recebe link de redefinição, por desenho.
+  const criado = await admin.req('POST', '/api/usuarios', {
+    nome: 'Paula Recuperação', email: 'paula@teste.adv.br',
+    senha: 'senhaInicial123', perfil: 'advogado',
+  });
+  assert.equal(criado.status, 201);
+
+  linhasDoServidor.length = 0;
+  await admin.req('POST', '/api/recuperacao', { email: 'paula@teste.adv.br' });
+  await new Promise((r) => setTimeout(r, 300));
+  const token = (linhasDoServidor.join(' ').match(/redefinir\/([A-Za-z0-9]+)/) || [])[1];
+  assert.ok(token, 'link de redefinição não foi registrado');
+
+  const primeira = await admin.req('POST', '/api/recuperacao/confirmar',
+    { token, senha: 'senhaRedefinida1' });
+  assert.equal(primeira.status, 200);
+
+  const repetida = await admin.req('POST', '/api/recuperacao/confirmar',
+    { token, senha: 'outraSenha12345' });
+  assert.equal(repetida.status, 400);
+
+  const entrada = await criarCliente().req('POST', '/api/sessao',
+    { email: 'paula@teste.adv.br', senha: 'senhaRedefinida1' });
+  assert.equal(entrada.status, 200);
 });
 
 console.log('\nConfigurações e encerramento');

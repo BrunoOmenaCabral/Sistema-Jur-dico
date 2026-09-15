@@ -424,3 +424,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* Atalho de cadastro dentro de outro formulário --------------------------- */
 .atalho-cadastro { margin-top: .35rem; align-self: flex-start; }
+
+/* Código de recuperação ------------------------------------------------- */
+.codigo-recuperacao { font-size: 1.25rem; letter-spacing: .12em; text-align: center;
+  padding: .8rem; border: 1px dashed var(--linha); border-radius: var(--r);
+  background: var(--surface-2); user-select: all; }

@@ -70,6 +70,8 @@ export function lerFormulario(form, campos) {
     if (!el) continue;
     if (c.tipo === 'checkbox') dados[c.nome] = el.checked;
     else if (c.tipo === 'number' || c.tipo === 'money') dados[c.nome] = el.value === '' ? null : Number(el.value);
+    // Senha vai como foi digitada: espaço no início ou no fim é parte dela.
+    else if (c.tipo === 'password') dados[c.nome] = el.value;
     else dados[c.nome] = el.value.trim();
   }
   return dados;

@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { config } from './config.js';
+import { enviar as enviarEmail, disponivel as emailDisponivel } from './email.js';
 import { abrirBanco } from './banco.js';
 import {
   criarToken, lerToken, cookieDeSessao, cookieDeSaida, lerCookies, NOME_COOKIE,
@@ -12,6 +13,7 @@ import {
 import {
   autenticar, aplicarMutacoes, estadoCompleto, estadoDesde, salvarConfiguracoes,
   criarUsuario, definirSenha, usuarioPorId, publicarUsuario, prepararBase, ErroDeUso,
+  alterarAcesso, solicitarRecuperacao, redefinirComToken,
 } from './servico.js';
 
 const TIPOS = {
@@ -111,6 +113,50 @@ async function api(req, res, url) {
     return responder(res, 200, { ok: true }, { 'Set-Cookie': cookieDeSaida() });
   }
 
+  // Redefinição de senha: pública por natureza, já que quem a pede não
+  // consegue entrar. O limite por endereço evita que vire ferramenta de sondagem.
+  if (rota === '/recuperacao' && metodo === 'POST') {
+    if (!origemConfiavel(req)) return responder(res, 403, { erro: 'Requisição não autorizada.' });
+    const { email } = await lerCorpo(req);
+    const chave = `recuperacao|${req.socket.remoteAddress}`;
+    const espera = bloqueado(chave);
+    if (espera) return responder(res, 429, { erro: `Aguarde ${espera} segundos para novo pedido.` });
+    registrarFalha(chave);
+
+    const pedido = solicitarRecuperacao(email);
+    // A resposta é a mesma exista ou não a conta, para não revelar quem tem acesso.
+    const generica = { ok: true, mensagem: 'Se houver conta com este e-mail, as instruções de '
+      + 'redefinição foram enviadas para ele.' };
+    if (!pedido.token) return responder(res, 200, generica);
+
+    const base = config.enderecoPublico || `http://${req.headers.host || 'localhost'}`;
+    const link = `${base}/#/redefinir/${pedido.token}`;
+    const envio = await enviarEmail({
+      para: pedido.usuario.email,
+      assunto: 'Redefinição de senha',
+      texto: `Você pediu para redefinir a senha de acesso ao sistema.\n\n${link}\n\n`
+        + `O link vale por ${config.minutosRecuperacao} minutos e só pode ser usado uma vez. `
+        + 'Se não foi você quem pediu, ignore esta mensagem: nada muda sem que o link seja aberto.',
+    });
+    if (!envio.enviado) {
+      // Sem provedor de e-mail, o administrador recebe o link pelo registro do
+      // servidor. É o que evita deixar alguém trancado do lado de fora.
+      console.warn(`[recuperacao] e-mail não enviado (${envio.motivo}). Link para `
+        + `${pedido.usuario.email}: ${link}`);
+    }
+    return responder(res, 200, { ...generica, emailConfigurado: emailDisponivel() });
+  }
+
+  if (rota === '/recuperacao/confirmar' && metodo === 'POST') {
+    if (!origemConfiavel(req)) return responder(res, 403, { erro: 'Requisição não autorizada.' });
+    const { token, senha } = await lerCorpo(req);
+    try {
+      return responder(res, 200, redefinirComToken(token, senha));
+    } catch (e) {
+      return responder(res, e.status || 400, { erro: e.message });
+    }
+  }
+
   const usuario = usuarioDaRequisicao(req);
 
   if (rota === '/sessao' && metodo === 'GET') {
@@ -179,6 +225,15 @@ async function api(req, res, url) {
   if (rota === '/usuarios' && metodo === 'POST') {
     if (usuario.perfil !== 'admin') return responder(res, 403, { erro: 'Restrito ao administrador.' });
     return responder(res, 201, { usuario: criarUsuario(await lerCorpo(req), usuario) });
+  }
+
+  const acessoRota = rota.match(/^\/usuarios\/([\w-]+)\/acesso$/);
+  if (acessoRota && metodo === 'PUT') {
+    try {
+      return responder(res, 200, alterarAcesso(acessoRota[1], await lerCorpo(req), usuario));
+    } catch (e) {
+      return responder(res, e.status || 400, { erro: e.message });
+    }
   }
 
   const senhaRota = rota.match(/^\/usuarios\/([\w-]+)\/senha$/);
