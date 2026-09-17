@@ -10,7 +10,10 @@ import { cabecalhoPagina, opcoesProcessos, opcoesUsuarios } from '../ui/componen
 import { db } from '../core/store.js';
 import { interpretarPublicacao } from '../core/ia.js';
 import { publicacoes as servicoPublicacoes, fatiarTextoDiario, oabsMonitoradas } from '../core/integracoes.js';
-import { processoDe, nomeCliente, conflitosDePrazo, revisarVinculos } from '../core/dominio.js';
+import {
+  processoDe, nomeCliente, conflitosDePrazo, revisarVinculos,
+  arquivarPublicacoes, reabrirPublicacoes, marcarPublicacoesSemPrazo,
+} from '../core/dominio.js';
 import { TIPOS_PRAZO, tipoPrazo } from '../core/calculo-prazo.js';
 import { fmtCNJ, fmtData, hoje, addDays, cnjDigitos } from '../core/util.js';
 import { ir, recarregar } from '../ui/roteador.js';
@@ -22,6 +25,8 @@ export function publicacoes({ params }) {
   if (params[0]) return fichaPublicacao(params[0]);
   definirTitulo('Publicações');
   let aba = 'pendente';
+  // A seleção vale para a aba corrente: trocar de aba começa do zero.
+  let selecionadas = new Set();
 
   const cfg = db.config().integracoes.publicacoes;
   const inscricoes = oabsMonitoradas();
@@ -42,18 +47,29 @@ export function publicacoes({ params }) {
       <div class="aba ativa" data-aba="pendente">Aguardando conferência</div>
       <div class="aba" data-aba="confirmada">Confirmadas</div>
       <div class="aba" data-aba="ignorada">Sem prazo</div>
+      <div class="aba" data-aba="arquivada">Arquivadas</div>
     </div>
+    <div id="barra-selecao"></div>
     <div class="cartao"><div class="cartao__corpo cartao__corpo--liso" id="lista"></div></div>
   </div>`);
 
   const desenhar = () => {
     const lista = db.listar('publicacoes', { status: aba })
       .sort((a, b) => String(b.dataPublicacao).localeCompare(String(a.dataPublicacao)));
+
+    // Seleção só faz sentido sobre o que está à vista.
+    const visiveis = new Set(lista.map((x) => x.id));
+    selecionadas = new Set([...selecionadas].filter((id) => visiveis.has(id)));
+    desenharBarra(lista);
+
     qs('#lista', tela).innerHTML = lista.length ? `<ul class="lista">${lista.map((p) => {
       const s = p.sugestao || {};
       const proc = processoDe(p.processoId || s.processoId);
       return `<li class="lista__item" data-id="${p.id}">
         <span class="lista__faixa" style="background:var(--c-publicacao)"></span>
+        <label class="selecao" title="Selecionar">
+          <input type="checkbox" data-sel="${p.id}" ${selecionadas.has(p.id) ? 'checked' : ''}>
+        </label>
         <div class="lista__corpo">
           <div class="lista__titulo">
             <span class="mono">${esc(fmtCNJ(p.numeroCNJ))}</span>
@@ -72,12 +88,80 @@ export function publicacoes({ params }) {
     }).join('')}</ul>` : '<div class="vazio"><span class="ico">📰</span>Nada nesta aba.</div>';
   };
 
+  /** Barra de ações em lote, presente só quando há o que selecionar. */
+  const desenharBarra = (lista) => {
+    const caixa = qs('#barra-selecao', tela);
+    if (!lista.length) { caixa.innerHTML = ''; return; }
+    const n = selecionadas.size;
+    const todas = n === lista.length;
+    caixa.innerHTML = `<div class="barra-lote">
+      <label class="linha">
+        <input type="checkbox" data-sel-todos ${todas ? 'checked' : ''}
+          ${n && !todas ? 'data-parcial' : ''}>
+        <span class="mini">${n ? `${n} de ${lista.length} selecionada(s)` : 'Selecionar todas'}</span>
+      </label>
+      ${n ? `<span class="linha">
+        ${aba !== 'arquivada'
+    ? '<button class="btn btn--pequeno" data-lote="arquivar">Arquivar</button>' : ''}
+        ${aba === 'arquivada'
+    ? '<button class="btn btn--pequeno" data-lote="reabrir">Devolver à fila</button>' : ''}
+        ${aba === 'pendente'
+    ? '<button class="btn btn--pequeno" data-lote="sem-prazo">Marcar sem prazo</button>' : ''}
+        <button class="btn btn--pequeno btn--fantasma" data-lote="limpar">Limpar seleção</button>
+      </span>` : ''}
+    </div>`;
+    const marcador = qs('[data-sel-todos]', caixa);
+    if (marcador) marcador.indeterminate = Boolean(n) && !todas;
+  };
+
+  delegar(tela, 'change', '[data-sel]', (_e, el) => {
+    if (el.checked) selecionadas.add(el.dataset.sel);
+    else selecionadas.delete(el.dataset.sel);
+    desenharBarra(db.listar('publicacoes', { status: aba }));
+  });
+
+  delegar(tela, 'change', '[data-sel-todos]', (_e, el) => {
+    const lista = db.listar('publicacoes', { status: aba });
+    selecionadas = el.checked ? new Set(lista.map((x) => x.id)) : new Set();
+    desenhar();
+  });
+
+  delegar(tela, 'click', '[data-lote]', async (_e, el) => {
+    const acao = el.dataset.lote;
+    if (acao === 'limpar') { selecionadas = new Set(); desenhar(); return; }
+
+    const ids = [...selecionadas];
+    const rotulos = {
+      arquivar: ['Arquivar publicações',
+        `Arquivar ${ids.length} publicação(ões)? Elas saem da fila de conferência e continuam `
+        + 'consultáveis na aba Arquivadas, de onde podem voltar.'],
+      reabrir: ['Devolver à fila',
+        `Devolver ${ids.length} publicação(ões) à fila de conferência?`],
+      'sem-prazo': ['Marcar sem prazo',
+        `Marcar ${ids.length} publicação(ões) como sem prazo a cumprir? `
+        + 'Use apenas quando o ato realmente não abre prazo.'],
+    }[acao];
+
+    if (!await confirmar({ titulo: rotulos[0], mensagem: rotulos[1], rotuloOk: rotulos[0] })) return;
+
+    const r = acao === 'arquivar' ? arquivarPublicacoes(ids)
+      : acao === 'reabrir' ? reabrirPublicacoes(ids)
+        : marcarPublicacoesSemPrazo(ids);
+    selecionadas = new Set();
+    aviso(`${r.alteradas} publicação(ões) atualizada(s).`, 'ok');
+    desenhar();
+  });
+
   delegar(tela, 'click', '.aba[data-aba]', (_e, el) => {
+    selecionadas = new Set();
     aba = el.dataset.aba;
     tela.querySelectorAll('.aba').forEach((a) => a.classList.toggle('ativa', a === el));
     desenhar();
   });
-  delegar(tela, 'click', '.lista__item[data-id]', (_e, el) => ir(`publicacoes/${el.dataset.id}`));
+  delegar(tela, 'click', '.lista__item[data-id]', (ev, el) => {
+    if (ev.target.closest('.selecao')) return;
+    ir(`publicacoes/${el.dataset.id}`);
+  });
   delegar(tela, 'click', '[data-acao="revisar"]', () => {
     const r = revisarVinculos({ reinterpretar: interpretarPublicacao });
     const partes = [];

@@ -1310,4 +1310,51 @@ teste('a revisão limitada a um número não percorre as demais publicações', 
   assert.equal(db.obter('publicacoes', outra.id).processoId, null);
 });
 
+console.log('\nFila de publicações em lote');
+
+const { arquivarPublicacoes, reabrirPublicacoes, marcarPublicacoesSemPrazo, STATUS_PUBLICACAO } =
+  await import('../src/core/dominio.js');
+
+const filaTeste = [1, 2, 3].map((i) => db.inserir('publicacoes', {
+  numeroCNJ: cnjValido(1000 + i), status: 'pendente', dataPublicacao: hoje(),
+  conteudo: `Publicação ${i}.`,
+}));
+
+teste('arquivada é status próprio, distinto de sem prazo', () => {
+  assert.ok(STATUS_PUBLICACAO.includes('arquivada'));
+  assert.ok(STATUS_PUBLICACAO.includes('ignorada'));
+});
+teste('arquivar em lote tira da fila sem apagar nada', () => {
+  const r = arquivarPublicacoes(filaTeste.map((x) => x.id));
+  assert.equal(r.alteradas, 3);
+  assert.equal(db.listar('publicacoes', { status: 'pendente' })
+    .filter((x) => x.conteudo.startsWith('Publicação ')).length, 0);
+  assert.equal(db.listar('publicacoes', { status: 'arquivada' }).length, 3);
+  // O conteúdo permanece consultável.
+  assert.equal(db.obter('publicacoes', filaTeste[0].id).conteudo, 'Publicação 1.');
+});
+teste('arquivar de novo não conta o que já estava arquivado', () => {
+  assert.equal(arquivarPublicacoes(filaTeste.map((x) => x.id)).alteradas, 0);
+});
+teste('devolver à fila desfaz o arquivamento', () => {
+  const r = reabrirPublicacoes([filaTeste[0].id]);
+  assert.equal(r.alteradas, 1);
+  assert.equal(db.obter('publicacoes', filaTeste[0].id).status, 'pendente');
+});
+teste('marcar sem prazo é operação distinta de arquivar', () => {
+  marcarPublicacoesSemPrazo([filaTeste[0].id]);
+  assert.equal(db.obter('publicacoes', filaTeste[0].id).status, 'ignorada');
+  assert.equal(db.obter('publicacoes', filaTeste[1].id).status, 'arquivada');
+});
+teste('identificador inexistente é ignorado sem quebrar o lote', () => {
+  const r = arquivarPublicacoes([filaTeste[0].id, 'nao-existe', filaTeste[0].id]);
+  assert.equal(r.alteradas, 1);
+});
+teste('a auditoria registra cada mudança de status', () => {
+  const registros = db.listar('auditoria', { incluirExcluidos: true })
+    .filter((a) => a.registroId === filaTeste[0].id);
+  assert.ok(registros.some((a) => /arquivada/i.test(a.detalhe || '')));
+  assert.ok(registros.some((a) => /fila de conferência/i.test(a.detalhe || '')));
+});
+
 console.log(`\n${passou} verificações concluídas.`);

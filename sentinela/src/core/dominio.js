@@ -29,6 +29,10 @@ export const FASES_PROCESSO = ['Conhecimento', 'Instrução', 'Sentença', 'Recu
 
 export const STATUS_PROCESSO = ['ativo', 'suspenso', 'encerrado', 'arquivado'];
 
+// 'ignorada' é juízo sobre o conteúdo: não havia prazo ali. 'arquivada' é
+// juízo sobre a fila: já foi tratada e não precisa mais aparecer.
+export const STATUS_PUBLICACAO = ['pendente', 'confirmada', 'ignorada', 'arquivada'];
+
 export const CATEGORIAS_DOCUMENTO = ['Procuração', 'Contrato', 'Petição', 'Decisão',
   'Sentença', 'Acórdão', 'Comprovante', 'Documento do cliente', 'Diversos'];
 
@@ -493,6 +497,41 @@ export function buscaGlobal(termo) {
 }
 
 /* ----------------------------------------------------- ações de prazo --- */
+
+/* ------------------------------------------ fila de publicações ---------- */
+
+/**
+ * Tira da fila as publicações já tratadas.
+ *
+ * Arquivar não é dizer que não havia prazo — para isso existe "sem prazo". É
+ * dizer que aquela publicação não precisa mais ser conferida. Nada se perde: a
+ * publicação continua na aba própria e pode voltar à fila.
+ */
+export function arquivarPublicacoes(ids, motivo = '') {
+  return mudarStatusPublicacoes(ids, 'arquivada',
+    motivo ? `Publicação arquivada: ${motivo}` : 'Publicação arquivada');
+}
+
+/** Devolve à fila de conferência o que foi arquivado por engano. */
+export function reabrirPublicacoes(ids) {
+  return mudarStatusPublicacoes(ids, 'pendente', 'Publicação devolvida à fila de conferência');
+}
+
+/** Marca como sem prazo, que é juízo sobre o conteúdo do ato. */
+export function marcarPublicacoesSemPrazo(ids) {
+  return mudarStatusPublicacoes(ids, 'ignorada', 'Publicação sem prazo a cumprir');
+}
+
+function mudarStatusPublicacoes(ids, status, detalhe) {
+  let alteradas = 0;
+  for (const id of new Set(ids || [])) {
+    const pub = db.obter('publicacoes', id);
+    if (!pub || pub.status === status) continue;
+    db.atualizar('publicacoes', id, { status }, detalhe);
+    alteradas += 1;
+  }
+  return { alteradas, status };
+}
 
 /* --------------------------------------------- revisão de vínculos ------- */
 

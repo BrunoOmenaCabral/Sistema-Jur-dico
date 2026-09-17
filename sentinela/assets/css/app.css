@@ -440,3 +440,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* Retorno da ficha para a listagem -------------------------------------- */
 .voltar { font-size: 1.15rem; line-height: 1; padding: .3rem .55rem; flex: 0 0 auto; }
+
+/* Seleção em lote na fila de publicações --------------------------------- */
+.barra-lote { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center;
+  justify-content: space-between; padding: .5rem .7rem; margin-bottom: .5rem;
+  border: 1px solid var(--linha); border-radius: var(--r); background: var(--surface); }
+.barra-lote label { cursor: pointer; }
+.lista__item .selecao { display: flex; align-items: center; padding: 0 .2rem 0 .1rem; }
+.lista__item .selecao input { cursor: pointer; }
