@@ -4,7 +4,7 @@
 
 import { db } from './store.js';
 import {
-  hoje, iso, addDays, diffDias, toDate, norm, ordenarPor, fmtData, fmtCNJ, cnjDigitos,
+  hoje, iso, addDays, addMonths, diffDias, toDate, norm, ordenarPor, fmtData, fmtCNJ, cnjDigitos,
 } from './util.js';
 import { diasUteisAte, tipoPrazo } from './calculo-prazo.js';
 
@@ -498,6 +498,71 @@ export function buscaGlobal(termo) {
 }
 
 /* ----------------------------------------------------- ações de prazo --- */
+
+/* ------------------------------------------------- honorários ------------ */
+
+export const PERIODICIDADES = [
+  { id: 'mensal', rotulo: 'Mensal', dias: null, meses: 1 },
+  { id: 'quinzenal', rotulo: 'Quinzenal', dias: 15, meses: null },
+  { id: 'semanal', rotulo: 'Semanal', dias: 7, meses: null },
+  { id: 'bimestral', rotulo: 'Bimestral', dias: null, meses: 2 },
+];
+
+/**
+ * Monta a proposta de parcelamento do contrato.
+ *
+ * A entrada é parcela como as outras, apenas com data própria e valor próprio,
+ * porque na prática ela costuma ser paga na assinatura e o saldo só depois.
+ * O arredondamento sobra na última parcela, de modo que a soma feche com o
+ * valor contratado até o centavo — diferença de centavos em honorários vira
+ * discussão com o cliente.
+ *
+ * A proposta é ponto de partida: a tela permite ajustar data e valor de cada
+ * linha antes de gravar, já que acordo de honorários raramente é regular.
+ */
+export function montarParcelas({
+  total, entrada = 0, dataEntrada = null, parcelas = 1,
+  primeiroVencimento = null, periodicidade = 'mensal',
+} = {}) {
+  const bruto = Math.round(Number(total || 0) * 100);
+  const daEntrada = Math.min(Math.max(Math.round(Number(entrada || 0) * 100), 0), bruto);
+  const saldo = bruto - daEntrada;
+  const n = Math.max(1, Math.floor(Number(parcelas) || 1));
+
+  const lista = [];
+  if (daEntrada > 0) {
+    lista.push({
+      n: 1, rotulo: 'Entrada', entrada: true,
+      vencimento: dataEntrada || hoje(), valor: daEntrada / 100, pagoEm: null,
+    });
+  }
+
+  if (saldo > 0) {
+    const regra = PERIODICIDADES.find((x) => x.id === periodicidade) || PERIODICIDADES[0];
+    const base = Math.floor(saldo / n);
+    const resto = saldo - base * n;
+    const inicio = primeiroVencimento
+      || (dataEntrada ? addMonths(dataEntrada, 1) : addMonths(hoje(), 1));
+
+    for (let i = 0; i < n; i += 1) {
+      const centavos = base + (i === n - 1 ? resto : 0);
+      lista.push({
+        n: lista.length + 1,
+        rotulo: `${i + 1}ª parcela`,
+        entrada: false,
+        vencimento: regra.meses ? addMonths(inicio, i * regra.meses) : addDays(inicio, i * regra.dias),
+        valor: centavos / 100,
+        pagoEm: null,
+      });
+    }
+  }
+
+  return lista;
+}
+
+/** Soma das parcelas, para conferir se fecha com o contratado. */
+export const somaParcelas = (lista) =>
+  Math.round((lista || []).reduce((s, p) => s + Number(p.valor || 0) * 100, 0)) / 100;
 
 /* ------------------------------------------ fila de publicações ---------- */
 

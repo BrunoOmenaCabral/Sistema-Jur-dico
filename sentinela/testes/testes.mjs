@@ -1419,4 +1419,49 @@ teste('o grau acompanha o registro até a linha do tempo', () => {
   assert.ok(linha.some((i) => i.grau === 'TR'));
 });
 
+/* ============================ honorários: entrada e parcelas ============== */
+
+const { montarParcelas, somaParcelas, PERIODICIDADES } = await import('../src/core/dominio.js');
+
+teste('sem entrada, o total divide-se nas parcelas pedidas', () => {
+  const p = montarParcelas({ total: 3000, parcelas: 3, primeiroVencimento: '2026-10-05' });
+  assert.equal(p.length, 3);
+  assert.equal(somaParcelas(p), 3000);
+  assert.deepEqual(p.map((x) => x.vencimento), ['2026-10-05', '2026-11-05', '2026-12-05']);
+});
+teste('a entrada entra como primeira linha, com valor e data próprios', () => {
+  const p = montarParcelas({
+    total: 10000, entrada: 2000, dataEntrada: '2026-09-20',
+    parcelas: 4, primeiroVencimento: '2026-10-20',
+  });
+  assert.equal(p.length, 5);
+  assert.equal(p[0].rotulo, 'Entrada');
+  assert.equal(p[0].valor, 2000);
+  assert.equal(p[0].vencimento, '2026-09-20');
+  assert.deepEqual(p.slice(1).map((x) => x.valor), [2000, 2000, 2000, 2000]);
+  assert.equal(somaParcelas(p), 10000);
+});
+teste('o arredondamento sobra na última parcela e a soma fecha no centavo', () => {
+  const p = montarParcelas({ total: 1000, parcelas: 3, primeiroVencimento: '2026-10-01' });
+  assert.deepEqual(p.map((x) => x.valor), [333.33, 333.33, 333.34]);
+  assert.equal(somaParcelas(p), 1000);
+});
+teste('a periodicidade muda o intervalo entre os vencimentos', () => {
+  const q = montarParcelas({ total: 900, parcelas: 3, primeiroVencimento: '2026-10-01', periodicidade: 'quinzenal' });
+  assert.deepEqual(q.map((x) => x.vencimento), ['2026-10-01', '2026-10-16', '2026-10-31']);
+  const b = montarParcelas({ total: 900, parcelas: 3, primeiroVencimento: '2026-10-01', periodicidade: 'bimestral' });
+  assert.deepEqual(b.map((x) => x.vencimento), ['2026-10-01', '2026-12-01', '2027-02-01']);
+  assert.ok(PERIODICIDADES.some((x) => x.id === 'mensal'));
+});
+teste('entrada que cobre o contrato dispensa parcelas do saldo', () => {
+  const p = montarParcelas({ total: 2000, entrada: 2000, dataEntrada: '2026-09-20', parcelas: 6 });
+  assert.equal(p.length, 1);
+  assert.equal(somaParcelas(p), 2000);
+});
+teste('nenhuma parcela fica sem vencimento quando a data não é informada', () => {
+  const p = montarParcelas({ total: 1200, entrada: 300, dataEntrada: '2026-09-17', parcelas: 3 });
+  assert.ok(p.every((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.vencimento)));
+  assert.equal(somaParcelas(p), 1200);
+});
+
 console.log(`\n${passou} verificações concluídas.`);
