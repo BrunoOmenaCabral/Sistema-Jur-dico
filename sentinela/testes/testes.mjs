@@ -692,12 +692,13 @@ teste('movimento do tribunal vira registro da linha do tempo', () => {
   const r = movimentoComoRegistro({
     codigo: 970, nome: 'Audiência', dataHora: '2026-03-10T14:06:24.000Z',
     complementosTabelados: [{ nome: 'designada' }, { nome: 'conciliação' }],
-  }, { tribunal: 'TJPE' });
+  }, { tribunal: 'TJPE', grau: 'G1' });
   assert.equal(r.data, '2026-03-10');
   assert.equal(r.titulo, 'Audiência');
   assert.equal(r.descricao, 'designada · conciliação');
   assert.equal(r.origem, 'andamento processual');
-  assert.match(r.chaveExterna, /^datajud:TJPE:970:/);
+  assert.equal(r.grau, 'G1');
+  assert.match(r.chaveExterna, /^datajud:TJPE:G1:970:/);
 });
 
 // O serviço é simulado: nenhum teste toca a rede.
@@ -1355,6 +1356,67 @@ teste('a auditoria registra cada mudança de status', () => {
     .filter((a) => a.registroId === filaTeste[0].id);
   assert.ok(registros.some((a) => /arquivada/i.test(a.detalhe || '')));
   assert.ok(registros.some((a) => /fila de conferência/i.test(a.detalhe || '')));
+});
+
+console.log('\nProcesso com mais de uma instância');
+
+const fetchGraus = globalThis.fetch;
+const processoDoisGraus = db.inserir('processos', {
+  numeroCNJ: cnjValido(1201), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+});
+
+// O caso comum no DataJud: um registro por grau, cada um com os seus movimentos.
+// O mais recém-atualizado costuma ser o recursal, com menos histórico.
+globalThis.fetch = async (url) => {
+  if (!String(url).includes('_search') && !String(url).includes('datajud')) {
+    return { ok: true, status: 200, text: async () => '{}',
+      json: async () => ({ count: 0, items: [] }) };
+  }
+  return { ok: true, status: 200, text: async () => '{}', json: async () => ({ hits: { hits: [
+    { _source: { numeroProcesso: cnjValido(1201), tribunal: 'TJPE', grau: 'TR',
+      orgaoJulgador: { nome: '1ª Turma Recursal' },
+      dataHoraUltimaAtualizacao: '2026-09-13T10:00:00.000Z',
+      movimentos: [{ codigo: 239, nome: 'Não-Provimento', dataHora: '2026-09-10T10:00:00.000Z' }] } },
+    { _source: { numeroProcesso: cnjValido(1201), tribunal: 'TJPE', grau: 'JE',
+      orgaoJulgador: { nome: '13º Juizado Especial Cível' },
+      classe: { nome: 'Procedimento do Juizado Especial Cível' },
+      dataHoraUltimaAtualizacao: '2026-07-16T10:00:00.000Z',
+      movimentos: [
+        { codigo: 26, nome: 'Distribuição', dataHora: '2026-01-10T10:00:00.000Z' },
+        { codigo: 219, nome: 'Procedência', dataHora: '2026-05-05T10:00:00.000Z' },
+        { codigo: 239, nome: 'Não-Provimento', dataHora: '2026-09-10T10:00:00.000Z' },
+      ] } },
+  ] } }) };
+};
+const comGraus = await atualizar2(processoDoisGraus.id);
+globalThis.fetch = fetchGraus;
+
+teste('reúne os movimentos de todas as instâncias, não só da mais recente', () => {
+  assert.equal(comGraus.ok, true);
+  // Três do juizado mais um da turma recursal, sem colapsar o de mesmo código.
+  assert.equal(comGraus.importados, 4);
+});
+teste('mesmo código e data em graus distintos continuam sendo atos distintos', () => {
+  const chaves = db.listar('movimentacoes', { processoId: processoDoisGraus.id })
+    .map((m) => m.chaveExterna);
+  assert.equal(new Set(chaves).size, 4);
+  assert.ok(chaves.some((c) => c.includes(':TR:239:')));
+  assert.ok(chaves.some((c) => c.includes(':JE:239:')));
+});
+teste('a capa vem da instância atualizada mais recentemente', () => {
+  assert.equal(comGraus.capa.grau, 'TR');
+  assert.equal(comGraus.capa.vara, '1ª Turma Recursal');
+});
+teste('as instâncias consultadas são relatadas com a data da última alimentação', () => {
+  assert.equal(comGraus.graus.length, 2);
+  const tr = comGraus.graus.find((g) => g.grau === 'TR');
+  assert.equal(tr.movimentos, 1);
+  assert.match(tr.atualizadoEm, /^2026-09-13/);
+});
+teste('o grau acompanha o registro até a linha do tempo', () => {
+  const linha = linhaDoTempo(processoDoisGraus.id).filter((i) => i.tipo === 'movimentacao');
+  assert.ok(linha.some((i) => i.grau === 'JE'));
+  assert.ok(linha.some((i) => i.grau === 'TR'));
 });
 
 console.log(`\n${passou} verificações concluídas.`);

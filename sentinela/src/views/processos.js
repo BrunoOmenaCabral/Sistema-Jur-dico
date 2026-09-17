@@ -188,7 +188,8 @@ export function fichaProcesso(id) {
       <li data-tipo="${esc(t.tipo)}">
         <div class="linha linha--entre">
           <div class="timeline__data">${esc(fmtData(t.data))}
-            ${t.origem ? `<span class="selo selo--neutro">${esc(t.origem)}</span>` : ''}</div>
+            ${t.origem ? `<span class="selo selo--neutro">${esc(t.origem)}</span>` : ''}
+            ${t.grau ? `<span class="selo selo--neutro">${esc(t.grau)}</span>` : ''}</div>
           ${t.editavel ? `<span class="linha">
             <button class="btn btn--pequeno" data-editar-mov="${esc(t.registroId)}">Editar</button>
             <button class="btn btn--pequeno btn--perigo" data-excluir-mov="${esc(t.registroId)}">Excluir</button>
@@ -541,7 +542,16 @@ export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
             ${r.motivoTeor ? `<div class="aviso aviso--atencao quebra">${esc(r.motivoTeor)}</div>` : ''}
             ${r.complementados.length
     ? `<div class="mini mudo">Capa complementada: ${esc(r.complementados.join(', '))}.</div>` : ''}
-            <div class="mini mudo">Classe: ${esc(r.capa.classe || '—')} · Órgão: ${esc(r.capa.vara || '—')}</div>`;
+            <div class="mini mudo">Classe: ${esc(r.capa.classe || '—')} · Órgão: ${esc(r.capa.vara || '—')}</div>
+            ${(r.graus || []).length ? `<details style="margin-top:.5rem">
+              <summary class="mini">Instâncias consultadas (${r.graus.length})</summary>
+              ${r.graus.map((g) => `<div class="mini mudo">• ${esc(g.grau || 'grau não informado')} —
+                ${g.movimentos} movimento(s) · o tribunal atualizou esta base em
+                ${esc(fmtData(g.atualizadoEm))} · ${esc(g.orgao || '')}</div>`).join('')}
+              <div class="mini mudo" style="margin-top:.35rem">O DataJud é alimentado pelos
+                tribunais periodicamente, não em tempo real. Movimento recente pode ainda não
+                ter chegado aqui.</div>
+            </details>` : ''}`;
           aviso(`${r.importados} movimento(s) importado(s) do tribunal.`, 'ok');
           aoConcluir?.();
         } finally {

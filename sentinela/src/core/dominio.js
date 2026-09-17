@@ -409,6 +409,7 @@ export function linhaDoTempo(processoId) {
       teor: m.teor || null,
       linkTeor: m.linkTeor || null,
       fonteTeor: m.fonteTeor || null,
+      grau: m.grau || null,
     });
   }
   for (const c of db.listar('comunicacoes', { processoId })) {

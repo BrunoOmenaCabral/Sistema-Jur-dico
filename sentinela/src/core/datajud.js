@@ -147,31 +147,50 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
       + 'não são publicados, e a base pode não ter recebido este ainda.');
   }
 
-  // Havendo mais de um grau, prevalece o registro atualizado mais recentemente.
-  const fonte = achados
+  // Um processo costuma ter um registro por grau, e cada um traz os seus
+  // movimentos. Usar apenas o mais recente descartaria o andamento da origem,
+  // que é justamente onde está a maior parte do histórico.
+  const registros = achados
     .map((h) => h._source)
-    .sort((a, b) => String(b.dataHoraUltimaAtualizacao).localeCompare(String(a.dataHoraUltimaAtualizacao)))[0];
+    .sort((a, b) => String(b.dataHoraUltimaAtualizacao).localeCompare(String(a.dataHoraUltimaAtualizacao)));
+
+  // A capa vem do registro atualizado mais recentemente, que reflete a fase atual.
+  const capa = registros[0];
+
+  const movimentos = [];
+  const vistos = new Set();
+  for (const registro of registros) {
+    for (const m of registro.movimentos || []) {
+      const convertido = movimentoComoRegistro(m, registro);
+      if (!convertido.data || vistos.has(convertido.chaveExterna)) continue;
+      vistos.add(convertido.chaveExterna);
+      movimentos.push(convertido);
+    }
+  }
+  movimentos.sort((a, b) => String(a.data).localeCompare(String(b.data)));
 
   return {
     ok: true,
     motivo: null,
     indice: alvo,
-    graus: achados.length,
+    graus: registros.map((r) => ({
+      grau: r.grau || '',
+      orgao: r.orgaoJulgador?.nome || '',
+      movimentos: (r.movimentos || []).length,
+      atualizadoEm: r.dataHoraUltimaAtualizacao || null,
+    })),
     processo: {
-      numeroCNJ: fonte.numeroProcesso,
-      tribunal: fonte.tribunal || '',
-      grau: fonte.grau || '',
-      classe: fonte.classe?.nome || '',
-      assunto: (fonte.assuntos || []).map((a) => a.nome).filter(Boolean).join(', '),
-      vara: fonte.orgaoJulgador?.nome || '',
-      sistema: fonte.sistema?.nome || '',
-      dataDistribuicao: soData(fonte.dataAjuizamento),
-      atualizadoEm: fonte.dataHoraUltimaAtualizacao || null,
+      numeroCNJ: capa.numeroProcesso,
+      tribunal: capa.tribunal || '',
+      grau: capa.grau || '',
+      classe: capa.classe?.nome || '',
+      assunto: (capa.assuntos || []).map((a) => a.nome).filter(Boolean).join(', '),
+      vara: capa.orgaoJulgador?.nome || '',
+      sistema: capa.sistema?.nome || '',
+      dataDistribuicao: soData(capa.dataAjuizamento),
+      atualizadoEm: capa.dataHoraUltimaAtualizacao || null,
     },
-    movimentos: (fonte.movimentos || [])
-      .map((m) => movimentoComoRegistro(m, fonte))
-      .filter((m) => m.data)
-      .sort((a, b) => String(a.data).localeCompare(String(b.data))),
+    movimentos,
   };
 }
 
@@ -257,7 +276,11 @@ export function movimentoComoRegistro(movimento, processo = {}) {
     descricao: complementos.join(' · '),
     origem: 'andamento processual',
     // Identifica o movimento na origem, para não importar o mesmo duas vezes.
-    chaveExterna: `datajud:${processo.tribunal || ''}:${movimento.codigo}:${movimento.dataHora}`,
+    grau: processo.grau || '',
+    // O grau entra na chave: mesmo código e data, em graus distintos, são atos
+    // distintos, e colapsá-los esconderia o andamento de uma das instâncias.
+    chaveExterna: `datajud:${processo.tribunal || ''}:${processo.grau || ''}`
+      + `:${movimento.codigo}:${movimento.dataHora}`,
   };
 }
 
