@@ -22,6 +22,24 @@
           "value": "SAMEORIGIN"
         }
       ]
+    },
+    {
+      "source": "/(.*\\.(?:js|css|html))",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
     }
   ]
 }

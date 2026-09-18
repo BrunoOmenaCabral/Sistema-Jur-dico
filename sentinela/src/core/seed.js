@@ -1,9 +1,12 @@
-// Base de demonstração. Executa uma única vez, quando não há usuários
-// cadastrados, e produz datas relativas ao dia corrente para que o dashboard
-// já apresente prazos vencidos, do dia e futuros.
+// Base de demonstração: clientes, processos, prazos e publicações de exemplo,
+// com datas relativas ao dia corrente para que o painel já apresente prazos
+// vencidos, do dia e futuros.
+//
+// Nenhuma conta é criada aqui. Só acessa o sistema quem cadastra a própria
+// conta, e acesso de exemplo com senha conhecida seria porta aberta na base de
+// um escritório. A demonstração se apoia nas contas que já existem.
 
 import { db } from './store.js';
-import { criarUsuario } from './auth.js';
 import { hoje, addDays, uid } from './util.js';
 import { calcularPrazo } from './calculo-prazo.js';
 
@@ -19,33 +22,14 @@ function numeroCNJ(sequencial, ano, segmento, tribunal, origem) {
 
 /**
  * @param {object} opcoes
- *  - forcar: semeia mesmo havendo usuários (usado para carregar a demonstração
- *    sobre uma base de servidor já criada);
- *  - criarUsuarios: no modo servidor os acessos são criados pelo administrador,
- *    então a demonstração apenas reaproveita os usuários existentes.
+ *  - forcar: semeia ainda que a base já tenha cadastros.
  */
-export async function semear({ forcar = false, criarUsuarios = true } = {}) {
-  const existentes = db.listar('usuarios');
-  if (!forcar && existentes.length) return false;
+export async function semear({ forcar = false } = {}) {
+  if (!forcar && db.listar('clientes').length) return false;
 
-  let admin, advogada, assistente;
-  if (criarUsuarios) {
-    admin = await criarUsuario({
-      nome: 'Bruno Omena Cabral', email: 'admin@escritorio.adv.br', senha: 'sentinela',
-      perfil: 'admin', oab: 'OAB/PE 00000',
-    });
-    advogada = await criarUsuario({
-      nome: 'Maria Andrade', email: 'maria@escritorio.adv.br', senha: 'sentinela',
-      perfil: 'advogado', oab: 'OAB/PE 11111',
-    });
-    assistente = await criarUsuario({
-      nome: 'Carlos Lima', email: 'carlos@escritorio.adv.br', senha: 'sentinela',
-      perfil: 'assistente',
-    });
-  } else {
-    [admin, advogada = admin, assistente = admin] = existentes;
-    if (!admin) throw new Error('Cadastre ao menos um usuário antes de carregar a demonstração.');
-  }
+  const existentes = db.listar('usuarios');
+  const [admin, advogada = admin, assistente = admin] = existentes;
+  if (!admin) throw new Error('Crie a sua conta antes de carregar a demonstração.');
 
   const clientes = [
     { nome: 'João Pereira da Silva', tipoPessoa: 'PF', documento: '12345678909',

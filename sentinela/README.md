@@ -29,14 +29,10 @@ npx http-server -p 8080 .
 # abra http://localhost:8080/sentinela/
 ```
 
-Nesse modo tudo fica no armazenamento do próprio navegador, com base de
-demonstração criada automaticamente:
-
-| E-mail | Senha | Perfil |
-| --- | --- | --- |
-| admin@escritorio.adv.br | sentinela | Administrador |
-| maria@escritorio.adv.br | sentinela | Advogado |
-| carlos@escritorio.adv.br | sentinela | Assistente |
+Nesse modo tudo fica no armazenamento do próprio navegador. Não há conta de
+demonstração nem acesso padrão: na primeira abertura cria-se a conta do
+escritório, e só ela entra. Quem quiser conhecer o sistema com dados de exemplo
+carrega a base de demonstração em Configurações, já dentro da própria conta.
 
 A aplicação escolhe o modo sozinha: se houver servidor na origem em que ela foi
 aberta, ele é a fonte dos dados; se não houver, ela funciona localmente. Abrir o
@@ -46,8 +42,8 @@ ES exigem origem HTTP.
 ## Testes
 
 ```bash
-node sentinela/testes/testes.mjs                      # 37 verificações do núcleo
-node servidor/testes/testes.mjs                       # 28 verificações da API
+node sentinela/testes/testes.mjs                      # verificações do núcleo
+node servidor/testes/testes.mjs                       # verificações da API
 ```
 
 O primeiro cobre validação do número CNJ, calendário forense, contagem de prazos,

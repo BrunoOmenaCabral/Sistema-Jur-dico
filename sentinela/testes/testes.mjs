@@ -120,10 +120,25 @@ teste('exige informação suficiente para calcular', () => {
 
 console.log('\nBase de demonstração');
 const { semear } = await import('../src/core/seed.js');
+const { criarUsuario: criarConta } = await import('../src/core/auth.js');
+
+// Sem conta cadastrada não há demonstração: o sistema não cria acesso sozinho.
+let recusa = null;
+try { await semear(); } catch (e) { recusa = e.message; }
+
+await criarConta({ nome: 'Bruno Omena Cabral', email: 'bruno@escritorio.adv.br',
+  senha: 'senhaforte1', perfil: 'admin', oab: 'OAB/PE 00000' });
 await semear();
 const processo = db.listar('processos')[0];
-teste('semeadura cria usuários, clientes e processos', () => {
-  assert.ok(db.listar('usuarios').length >= 3);
+
+teste('a demonstração exige conta criada pelo próprio escritório', () => {
+  assert.match(recusa || '', /Crie a sua conta/);
+});
+teste('a demonstração não cria acesso com senha conhecida', () => {
+  const emails = db.listar('usuarios').map((u) => u.email);
+  assert.deepEqual(emails, ['bruno@escritorio.adv.br']);
+});
+teste('semeadura cria clientes e processos', () => {
   assert.ok(db.listar('clientes').length >= 3);
   assert.ok(db.listar('processos').length >= 4);
 });

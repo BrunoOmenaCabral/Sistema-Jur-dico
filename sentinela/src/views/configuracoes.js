@@ -337,12 +337,9 @@ export function configuracoes() {
         + 'de exemplo. Use apenas em ambiente de teste. Confirma?' })) return;
     el.disabled = true;
     const { semear } = await import('../core/seed.js');
-    // Havendo conta criada, a demonstração se apoia nela: não se criam contas
-    // de exemplo, com senha conhecida, dentro da base de quem já usa o sistema.
-    await semear({
-      forcar: true,
-      criarUsuarios: modoAtual() !== 'servidor' && db.listar('usuarios').length === 0,
-    });
+    // A demonstração se apoia na conta de quem está usando o sistema: acesso de
+    // exemplo, com senha conhecida, não entra na base de escritório algum.
+    await semear({ forcar: true });
     if (modoAtual() === 'servidor') {
       const { enviarFila } = await import('../core/store.js');
       await enviarFila();
