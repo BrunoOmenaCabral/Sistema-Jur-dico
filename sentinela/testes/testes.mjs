@@ -1643,6 +1643,16 @@ teste('mesmo código e data em graus distintos continuam sendo atos distintos', 
   assert.ok(chaves.some((c) => c.includes(':TR:239:')));
   assert.ok(chaves.some((c) => c.includes(':JE:239:')));
 });
+teste('a consulta informa até onde vai o andamento recebido', () => {
+  // A base foi alimentada em 13/09, mas o andamento só alcança 10/09: é essa a
+  // data que diz se a consulta chega ao que ocorreu esta semana.
+  assert.equal(comGraus.ultimoMovimentoEm, '2026-09-10');
+  const tr = comGraus.graus.find((g) => g.grau === 'TR');
+  assert.equal(tr.ultimoMovimentoEm, '2026-09-10');
+  assert.match(tr.atualizadoEm, /^2026-09-13/);
+  const je = comGraus.graus.find((g) => g.grau === 'JE');
+  assert.equal(je.ultimoMovimentoEm, '2026-09-10');
+});
 teste('a capa vem da instância atualizada mais recentemente', () => {
   assert.equal(comGraus.capa.grau, 'TR');
   assert.equal(comGraus.capa.vara, '1ª Turma Recursal');

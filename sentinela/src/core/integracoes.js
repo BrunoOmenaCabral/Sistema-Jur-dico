@@ -542,6 +542,8 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
     // As instâncias consultadas e a data em que cada tribunal alimentou a base:
     // é o que explica por que um movimento recente pode ainda não constar.
     graus: r.graus || [],
+    // Data do movimento mais recente que a base do CNJ tem deste processo.
+    ultimoMovimentoEm: r.ultimoMovimentoEm || null,
     importados,
     total: movimentos.length,
     repetidos: movimentos.length - importados,

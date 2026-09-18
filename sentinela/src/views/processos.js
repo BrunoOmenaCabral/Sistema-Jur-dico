@@ -13,7 +13,7 @@ import {
   dependenciasDoProcesso, arquivarProcesso, reativarProcesso, excluirProcesso, revisarVinculos,
   vincularProcessos, desvincularProcessos, vinculosDoProcesso, RELACOES_PROCESSO,
 } from '../core/dominio.js';
-import { fmtCNJ, validarCNJ, cnjDigitos, fmtData, fmtMoeda, norm, hoje } from '../core/util.js';
+import { fmtCNJ, validarCNJ, cnjDigitos, fmtData, fmtMoeda, norm, hoje, diffDias } from '../core/util.js';
 import { ir, recarregar } from '../ui/roteador.js';
 import { definirTitulo } from '../ui/casca.js';
 import { abrirFormularioPrazo, historicoHTML } from './prazos.js';
@@ -115,6 +115,9 @@ export function processos({ params }) {
 }
 
 /* ----------------------------------------------------------------- ficha */
+
+/** Dias entre o movimento mais recente que a base tem e hoje. */
+const atrasoDaBase = (data) => (data ? Math.max(0, diffDias(data, hoje())) : 0);
 
 export function fichaProcesso(id) {
   const p = db.obter('processos', id);
@@ -607,13 +610,19 @@ export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
             ${r.complementados.length
     ? `<div class="mini mudo">Capa complementada: ${esc(r.complementados.join(', '))}.</div>` : ''}
             <div class="mini mudo">Classe: ${esc(r.capa.classe || '—')} · Órgão: ${esc(r.capa.vara || '—')}</div>
+            ${r.ultimoMovimentoEm ? `<div class="aviso aviso--${atrasoDaBase(r.ultimoMovimentoEm) > 2 ? 'atencao' : 'info'}"
+              style="margin-top:.5rem">O andamento disponível na base pública do CNJ vai até
+              <strong>${esc(fmtData(r.ultimoMovimentoEm))}</strong>${atrasoDaBase(r.ultimoMovimentoEm) > 2
+    ? ` — ${atrasoDaBase(r.ultimoMovimentoEm)} dias atrás. O que ocorreu depois disso ainda não
+        foi enviado pelo tribunal e não pode ser importado por aqui.` : '.'}</div>` : ''}
             ${(r.graus || []).length ? `<details style="margin-top:.5rem">
               <summary class="mini">Instâncias consultadas (${r.graus.length})</summary>
               ${r.graus.map((g) => `<div class="mini mudo">• ${esc(g.grau || 'grau não informado')} —
-                ${g.movimentos} movimento(s) · o tribunal atualizou esta base em
+                ${g.movimentos} movimento(s) · andamento até
+                ${esc(fmtData(g.ultimoMovimentoEm) || '—')} · base alimentada em
                 ${esc(fmtData(g.atualizadoEm))} · ${esc(g.orgao || '')}</div>`).join('')}
               <div class="mini mudo" style="margin-top:.35rem">O DataJud é alimentado pelos
-                tribunais periodicamente, não em tempo real. Movimento recente pode ainda não
+                tribunais em lotes, não em tempo real. Movimento recente pode ainda não
                 ter chegado aqui.</div>
             </details>` : ''}`;
           aviso(`${r.importados} movimento(s) importado(s) do tribunal.`, 'ok');

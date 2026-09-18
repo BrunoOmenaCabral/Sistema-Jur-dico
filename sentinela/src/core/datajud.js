@@ -178,7 +178,12 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
       orgao: r.orgaoJulgador?.nome || '',
       movimentos: (r.movimentos || []).length,
       atualizadoEm: r.dataHoraUltimaAtualizacao || null,
+      // Até onde vai o andamento efetivamente recebido. É o que importa para
+      // saber se a consulta alcança o que ocorreu esta semana.
+      ultimoMovimentoEm: (r.movimentos || [])
+        .map((m) => soData(m.dataHora)).filter(Boolean).sort().at(-1) || null,
     })),
+    ultimoMovimentoEm: movimentos.map((m) => m.data).filter(Boolean).sort().at(-1) || null,
     processo: {
       numeroCNJ: capa.numeroProcesso,
       tribunal: capa.tribunal || '',
