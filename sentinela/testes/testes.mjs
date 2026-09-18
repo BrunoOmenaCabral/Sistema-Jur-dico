@@ -1035,6 +1035,61 @@ teste('o teor alimenta a descrição objetiva enviada ao cliente', () => {
   assert.match(v.itens[0].resumo, /julgado procedente/);
 });
 
+/* ------------------- o que o relatório do período precisa alcançar -------- */
+
+const processoDoPeriodo = db.inserir('processos', {
+  numeroCNJ: cnjValido(811), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+});
+db.inserir('movimentacoes', { processoId: processoDoPeriodo.id, data: addDays(hoje(), -1),
+  titulo: 'Juntada de Petição', origem: 'andamento processual' });
+for (let i = 0; i < 40; i += 1) {
+  db.inserir('movimentacoes', { processoId: processoDoPeriodo.id, data: addDays(hoje(), -(i + 2)),
+    titulo: `Movimento ${i + 1}`, origem: 'andamento processual' });
+}
+
+teste('a movimentação do próprio dia do corte entra no relatório', () => {
+  // "A partir de ontem" tem de alcançar ontem: a juntada daquele dia é o caso.
+  const v = novidadesDoProcesso(processoDoPeriodo.id, { desde: addDays(hoje(), -1), limite: null });
+  assert.ok(v.itens.some((i) => /Juntada de Petição/.test(i.fonte || '')),
+    'a juntada do dia do corte ficou de fora');
+});
+teste('o relatório do período não descarta movimentação em silêncio', () => {
+  const v = novidadesDoProcesso(processoDoPeriodo.id, { desde: addDays(hoje(), -60), limite: null });
+  assert.equal(v.itens.length, 41);
+  assert.equal(v.total, 41);
+  assert.equal(v.omitidos, 0);
+});
+teste('ato lançado à mão e depois importado não sai duas vezes ao cliente', () => {
+  const dia = addDays(hoje(), -3);
+  const proc = db.inserir('processos', {
+    numeroCNJ: cnjValido(812), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+  });
+  db.inserir('movimentacoes', { processoId: proc.id, data: dia, titulo: 'Conclusão para despacho',
+    origem: 'manual' });
+  // Lançado à mão, porém marcado como andamento do tribunal: sem chave externa,
+  // continua sendo lançamento do escritório.
+  db.inserir('movimentacoes', { processoId: proc.id, data: dia, titulo: 'Conclusão para Despacho',
+    origem: 'andamento processual' });
+  db.inserir('movimentacoes', { processoId: proc.id, data: dia, titulo: 'Conclusão para Despacho',
+    origem: 'andamento processual', chaveExterna: 'datajud:TJPE:G1:51:x' });
+  db.inserir('movimentacoes', { processoId: proc.id, data: dia, titulo: 'Juntada de Petição',
+    origem: 'andamento processual', chaveExterna: 'datajud:TJPE:G1:581:a' });
+  // Homônimos vindos do próprio tribunal continuam sendo atos distintos.
+  db.inserir('movimentacoes', { processoId: proc.id, data: dia, titulo: 'Juntada de Petição',
+    origem: 'andamento processual', chaveExterna: 'datajud:TJPE:G2:581:b' });
+
+  const v = novidadesDoProcesso(proc.id, { desde: addDays(hoje(), -10), limite: null });
+  assert.equal(v.total, 3);
+  assert.equal(v.itens.filter((i) => /conclus/i.test(i.fonte || '')).length, 1);
+  assert.equal(v.itens.filter((i) => /juntada/i.test(i.fonte || '')).length, 2);
+});
+teste('havendo recorte, ele é informado em vez de escondido', () => {
+  const v = novidadesDoProcesso(processoDoPeriodo.id, { desde: addDays(hoje(), -60), limite: 12 });
+  assert.equal(v.itens.length, 12);
+  assert.equal(v.total, 41);
+  assert.equal(v.omitidos, 29);
+});
+
 console.log('\nCabeçalho das fichas');
 
 const { cabecalhoPagina } = await import('../src/ui/componentes.js');

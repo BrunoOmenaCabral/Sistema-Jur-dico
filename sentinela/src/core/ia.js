@@ -227,27 +227,49 @@ export function analisarAndamento(texto) {
  */
 export function novidadesDoProcesso(processoId, { desde = null, limite = 12 } = {}) {
   const processo = processoDe(processoId);
-  if (!processo) return { processo: null, itens: [], texto: '' };
+  if (!processo) return { processo: null, itens: [], texto: '', total: 0, omitidos: 0 };
 
   const corte = desde || ultimaComunicacao(processoId);
+  // Período pedido pelo escritório inclui o próprio dia do corte — "a partir de
+  // ontem" tem de alcançar a juntada de ontem. Já o corte deduzido do último
+  // envio ao cliente é exclusivo, para não repetir o que já foi comunicado.
+  const inclusivo = Boolean(desde);
+  const dentro = (data) => Boolean(data) && (!corte || (inclusivo ? data >= corte : data > corte));
   const itens = [];
 
   for (const pub of db.listar('publicacoes', { processoId })) {
     const data = pub.dataPublicacao || pub.dataDisponibilizacao;
-    if (!data || (corte && data <= corte)) continue;
+    if (!dentro(data)) continue;
     itens.push({ data, origem: 'DJEN', ...analisarAndamento(pub.conteudo), fonte: pub.conteudo });
   }
   for (const mov of db.listar('movimentacoes', { processoId })) {
-    if (!mov.data || (corte && mov.data <= corte)) continue;
+    if (!dentro(mov.data)) continue;
     // O teor do ato, quando foi possível obtê-lo, descreve melhor que o rótulo.
     const conteudo = mov.teor || mov.descricao || '';
     const analise = analisarAndamento(`${mov.titulo || ''} ${conteudo}`);
-    itens.push({ data: mov.data, origem: mov.origem === 'manual' ? 'registro interno' : 'andamento processual',
+    itens.push({ data: mov.data, titulo: mov.titulo || '',
+      // Só o que veio da consulta tem chave externa: é o que distingue o
+      // importado do lançado à mão, qualquer que seja a origem escolhida no
+      // formulário.
+      externo: Boolean(mov.chaveExterna),
+      origem: mov.origem === 'manual' ? 'registro interno' : 'andamento processual',
       ...analise, fonte: conteudo || mov.titulo });
   }
 
-  itens.sort((a, b) => String(b.data).localeCompare(String(a.data)));
-  const recortados = itens.slice(0, limite);
+  // O ato lançado à mão e depois importado do tribunal é o mesmo ato: no texto
+  // enviado ao cliente sairia em duplicidade. Prevalece o registro importado,
+  // que traz código e teor. Atos homônimos vindos da consulta permanecem, pois
+  // podem ser distintos — inclusive em instâncias diferentes.
+  const doTribunal = new Set(itens.filter((i) => i.externo && i.titulo)
+    .map((i) => `${i.data}|${norm(i.titulo)}`));
+  const unicos = itens.filter((i) => i.externo || !i.titulo
+    || !doTribunal.has(`${i.data}|${norm(i.titulo)}`));
+
+  unicos.sort((a, b) => String(b.data).localeCompare(String(a.data)));
+  // Limite nulo traz o período inteiro: relatório que recorta em silêncio faz o
+  // escritório crer que não houve andamento.
+  const teto = limite === null || limite === Infinity ? unicos.length : Math.max(0, limite);
+  const recortados = unicos.slice(0, teto);
 
   const linhas = recortados.map((i) => {
     const descricao = i.confiavel ? i.resumo
@@ -259,6 +281,8 @@ export function novidadesDoProcesso(processoId, { desde = null, limite = 12 } = 
     processo,
     desde: corte,
     itens: recortados,
+    total: unicos.length,
+    omitidos: unicos.length - recortados.length,
     texto: linhas.join('\n'),
   };
 }
@@ -456,8 +480,10 @@ export function relatorioProcessual({ clienteId, processoId = null, desde = null
   linhas.push('');
 
   let totalMovimentos = 0;
+  const semConferencia = [];
   for (const p of processos) {
-    const v = novidadesDoProcesso(p.id, { desde, limite: 30 });
+    // Sem recorte: o relatório do período mostra o período inteiro.
+    const v = novidadesDoProcesso(p.id, { desde, limite: null });
     const prazos = db.listar('prazos', { processoId: p.id })
       .filter((x) => ['pendente', 'andamento'].includes(x.status))
       .sort((a, b) => String(a.dataVencimento).localeCompare(String(b.dataVencimento)));
@@ -467,6 +493,13 @@ export function relatorioProcessual({ clienteId, processoId = null, desde = null
     linhas.push(`PROCESSO ${fmtCNJ(p.numeroCNJ)}`);
     linhas.push(`Assunto: ${p.assunto || p.classe || 'não informado'}`);
     if (p.vara || p.tribunal) linhas.push(`Juízo: ${[p.vara, p.tribunal].filter(Boolean).join(' — ')}`);
+    // Diz até quando o andamento foi conferido na origem: sem isso, o silêncio
+    // do relatório se confunde com ausência de movimentação.
+    if (p.ultimaConsultaTribunal) {
+      linhas.push(`Andamento conferido junto ao tribunal em ${fmtData(p.ultimaConsultaTribunal)}.`);
+    } else {
+      semConferencia.push(p);
+    }
     linhas.push('');
     linhas.push('Movimentações do período:');
     if (v.itens.length) {
@@ -491,5 +524,6 @@ export function relatorioProcessual({ clienteId, processoId = null, desde = null
   linhas.push('Este relatório reúne o andamento dos seus processos no período indicado. '
     + 'Qualquer dúvida pode ser encaminhada diretamente ao escritório.');
 
-  return { cliente, processos, desde, totalMovimentos, texto: linhas.join('\n'), vazio: false };
+  return { cliente, processos, desde, totalMovimentos, semConferencia,
+    texto: linhas.join('\n'), vazio: false };
 }

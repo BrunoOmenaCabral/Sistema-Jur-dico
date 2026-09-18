@@ -521,14 +521,14 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
     importados += 1;
   }
 
-  // Campos da capa que o cadastro manual costuma deixar em branco.
-  const completar = {};
+  // Campos da capa que o cadastro manual costuma deixar em branco. A data da
+  // conferência entra sempre: é o que permite ao relatório dizer até quando o
+  // andamento foi verificado na origem.
+  const completar = { ultimaConsultaTribunal: hoje() };
   for (const campo of ['tribunal', 'classe', 'assunto', 'vara', 'dataDistribuicao']) {
     if (!processo[campo] && r.processo[campo]) completar[campo] = r.processo[campo];
   }
-  if (Object.keys(completar).length) {
-    db.atualizar('processos', processoId, completar, 'Capa complementada pela consulta ao tribunal');
-  }
+  db.atualizar('processos', processoId, completar, 'Andamento conferido junto ao tribunal');
 
   return {
     ok: true,
@@ -546,7 +546,7 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
     motivoTeor,
     publicacoesConsultadas: consultadas,
     capa: r.processo,
-    complementados: Object.keys(completar),
+    complementados: Object.keys(completar).filter((c) => c !== 'ultimaConsultaTribunal'),
   };
 }
 
