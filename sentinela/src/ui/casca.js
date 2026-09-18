@@ -19,8 +19,8 @@ export const MENU = [
     { rota: 'tarefas', rotulo: 'Tarefas', ico: '✓', permissao: 'tarefas:ver' },
     { rota: 'audiencias', rotulo: 'Audiências', ico: '⚖', permissao: 'audiencias:ver' },
     { rota: 'relatorio-processual', rotulo: 'Relatório processual', ico: '📤', permissao: 'relatorios:ver' },
-  ] },
-  { grupo: 'Cadastros', itens: [
+    // Processo, cliente e documento são consulta do dia a dia, não cadastro que
+    // se faz uma vez: ficam junto do que se abre a toda hora.
     { rota: 'processos', rotulo: 'Processos', ico: '📁', permissao: 'processos:ver' },
     { rota: 'clientes', rotulo: 'Clientes', ico: '👤', permissao: 'clientes:ver' },
     { rota: 'documentos', rotulo: 'Documentos', ico: '📄', permissao: 'documentos:ver' },
