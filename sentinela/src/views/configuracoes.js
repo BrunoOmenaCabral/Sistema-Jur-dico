@@ -4,12 +4,42 @@
 import { h, qs, esc, delegar, aviso, confirmar } from '../ui/ui.js';
 import { modalFormulario } from '../ui/formulario.js';
 import { cabecalhoPagina } from '../ui/componentes.js';
-import { db, COLECOES, modoAtual, sincronizarCompleto, DIAS_ROTINA } from '../core/store.js';
+import {
+  db, COLECOES, modoAtual, sincronizarCompleto, DIAS_ROTINA, usoDoArmazenamento,
+} from '../core/store.js';
 import { pode } from '../core/auth.js';
 import { fmtData, fmtDataHora, hoje } from '../core/util.js';
 import { baixarArquivo } from '../core/integracoes.js';
 import { situacaoDasRondas, registrarRonda } from '../core/rondas.js';
 import { definirTitulo } from '../ui/casca.js';
+
+/**
+ * Quanto a base ocupa no navegador.
+ *
+ * O espaço do navegador é limitado e não avisa antes de acabar: cheio, o
+ * sistema deixa de gravar, e o que se acabou de digitar se perde. Mostrar o
+ * quanto falta é o que permite agir antes disso.
+ */
+function blocoArmazenamento() {
+  const u = usoDoArmazenamento();
+  if (!u) return '';
+  const mb = (n) => `${(n / 1024 / 1024).toFixed(2)} MB`;
+  const apertado = u.percentual >= 70;
+  return `<div class="mini" style="margin-top:.5rem">
+    <div class="linha linha--entre">
+      <span>Espaço ocupado no navegador</span>
+      <strong${apertado ? ' class="texto-fatal"' : ''}>${mb(u.total)} de ${mb(u.limite)}
+        (${u.percentual}%)</strong>
+    </div>
+    <div class="mudo">Dados ${esc(mb(u.base))}${u.copias ? ` · cópia do dia ${esc(mb(u.copias))}` : ''}.
+      O limite é do próprio navegador e é aproximado.</div>
+    ${u.copiaSuspensa ? `<div class="mudo">A cópia diária automática está suspensa porque a base
+      passou de 1,5 MB: exporte o arquivo de backup para guardar fora do navegador.</div>` : ''}
+    ${apertado ? `<div class="aviso aviso--atencao" style="margin-top:.4rem">Espaço perto do fim.
+      Documentos anexados são o que mais ocupa. Exporte uma cópia e remova o que já não precisa
+      ficar no navegador, antes que o sistema deixe de gravar.</div>` : ''}
+  </div>`;
+}
 
 /**
  * Situação das rondas de atualização, na própria integração de consulta.
@@ -236,6 +266,7 @@ export function configuracoes() {
           ${modoAtual() === 'servidor' ? 'Conectado ao servidor. Os dados são compartilhados por toda a equipe.'
     : 'Cópia diária automática no navegador: ativa.'}
         </div>
+        ${blocoArmazenamento()}
       </div></section>
       <section class="cartao"><div class="cartao__corpo">
         <h3>Base de demonstração</h3>

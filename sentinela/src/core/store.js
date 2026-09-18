@@ -131,17 +131,69 @@ function guardarNotificacoes() {
   catch { /* alerta pessoal não é crítico */ }
 }
 
+/** Remove as cópias de segurança guardadas no navegador. Devolve se liberou algo. */
+function descartarBackups() {
+  let liberou = false;
+  for (const k of Object.keys(localStorage)) {
+    if (k.startsWith('sentinela.backup.')) { localStorage.removeItem(k); liberou = true; }
+  }
+  return liberou;
+}
+
 function salvar() {
   if (modo === 'servidor') guardarNotificacoes();
   if (modo === 'local') {
+    const texto = JSON.stringify(estado);
     try {
-      localStorage.setItem(CHAVE, JSON.stringify(estado));
+      localStorage.setItem(CHAVE, texto);
     } catch (e) {
-      console.error('Não foi possível gravar os dados.', e);
-      throw new Error('Armazenamento local cheio ou indisponível.');
+      // Espaço esgotado. A cópia de segurança do dia é o que mais ocupa depois
+      // da própria base, e pode ser refeita amanhã: libera-se e tenta-se de
+      // novo, porque perder o que se acabou de digitar é o pior desfecho.
+      let gravou = false;
+      if (descartarBackups()) {
+        try { localStorage.setItem(CHAVE, texto); gravou = true; } catch { gravou = false; }
+      }
+      if (!gravou) {
+        console.error('Não foi possível gravar os dados.', e);
+        throw new Error('O armazenamento do navegador está cheio. Exporte uma cópia em '
+          + 'Configurações → Dados e remova documentos anexados ou processos antigos para '
+          + 'liberar espaço.');
+      }
     }
   }
   ouvintes.forEach((fn) => fn(estado));
+}
+
+// Acima deste tamanho a cópia diária deixa de ser feita: ela dobraria o espaço
+// ocupado justamente quando ele está no fim, e impediria o trabalho do dia.
+const LIMITE_BACKUP = 1.5 * 1024 * 1024;
+
+/**
+ * Quanto a base ocupa no navegador.
+ *
+ * O limite do navegador gira em torno de cinco megabytes por endereço e não é
+ * consultável: trata-se de estimativa, útil para avisar antes de faltar espaço.
+ */
+export function usoDoArmazenamento() {
+  if (modo === 'servidor') return null;
+  let base = 0;
+  let copias = 0;
+  try {
+    base = (localStorage.getItem(CHAVE) || '').length;
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith('sentinela.backup.')) copias += (localStorage.getItem(k) || '').length;
+    }
+  } catch { return null; }
+  const limite = 5 * 1024 * 1024;
+  return {
+    base,
+    copias,
+    total: base + copias,
+    limite,
+    percentual: Math.min(100, Math.round(((base + copias) / limite) * 100)),
+    copiaSuspensa: base > LIMITE_BACKUP,
+  };
 }
 
 export const aoMudar = (fn) => { ouvintes.add(fn); return () => ouvintes.delete(fn); };
@@ -456,14 +508,20 @@ export const db = {
   backupAutomatico() {
     if (modo === 'servidor') return; // o backup passa a ser do servidor
     try {
+      const conteudo = localStorage.getItem(CHAVE) || '';
+      // Base grande: a cópia diária fica de fora, e a segurança passa a ser a
+      // exportação para arquivo, que não disputa espaço com o trabalho.
+      if (conteudo.length > LIMITE_BACKUP) { descartarBackups(); return false; }
+
       const marca = `sentinela.backup.${hoje()}`;
       if (!localStorage.getItem(marca)) {
         for (const k of Object.keys(localStorage)) {
           if (k.startsWith('sentinela.backup.') && k !== marca) localStorage.removeItem(k);
         }
-        localStorage.setItem(marca, localStorage.getItem(CHAVE) || '');
+        localStorage.setItem(marca, conteudo);
       }
-    } catch (e) { console.warn('Backup automático não realizado.', e); }
+      return true;
+    } catch (e) { console.warn('Backup automático não realizado.', e); return false; }
   },
 };
 

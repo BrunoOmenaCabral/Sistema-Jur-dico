@@ -261,8 +261,18 @@ export function modalFormulario({ titulo, campos, valores = {}, rotuloSalvar = '
             return;
           }
           const dados = lerFormulario(form, campos);
-          const r = await aoSalvar(dados, { form, fechar, avisos: caixaAvisos });
-          if (r !== false) fechar();
+          try {
+            const r = await aoSalvar(dados, { form, fechar, avisos: caixaAvisos });
+            if (r !== false) fechar();
+          } catch (e) {
+            // Falha inesperada não pode sumir: sem isto, o formulário apenas
+            // deixa de responder e quem usa não sabe o que houve nem o que
+            // relatar. O texto técnico vai junto, porque é o que permite
+            // corrigir.
+            console.error('Falha ao salvar o formulário', e);
+            caixaAvisos.innerHTML = `<div class="aviso aviso--alerta">Não foi possível salvar.
+              ${esc(e.message || 'Erro inesperado.')}</div>`;
+          }
         },
       },
     ],
