@@ -8,7 +8,38 @@ import { db, COLECOES, modoAtual, sincronizarCompleto, DIAS_ROTINA } from '../co
 import { pode } from '../core/auth.js';
 import { fmtData, fmtDataHora, hoje } from '../core/util.js';
 import { baixarArquivo } from '../core/integracoes.js';
+import { situacaoDasRondas, registrarRonda } from '../core/rondas.js';
 import { definirTitulo } from '../ui/casca.js';
+
+/**
+ * Situação das rondas de atualização, na própria integração de consulta.
+ *
+ * O acompanhamento corre no navegador: convém dizer isso, para que ninguém
+ * suponha atualização com o sistema fechado.
+ */
+function blocoRondas() {
+  const s = situacaoDasRondas();
+  const permissao = typeof Notification === 'undefined' ? 'indisponivel' : Notification.permission;
+  return `<div class="campo campo--linha" style="margin-top:.4rem">
+      <input type="checkbox" data-ronda-ativa ${s.ativo ? 'checked' : ''}>
+      <label>Atualizar os processos três vezes ao dia</label>
+    </div>
+    <div class="mini mudo">Manhã, tarde e noite, com o sistema aberto. Cada ronda confere até
+      ${s.porRonda} processos, começando pelos que estão sem conferência há mais tempo —
+      ${s.emAcompanhamento} em acompanhamento.</div>
+    <div class="mini" style="margin-top:.35rem">
+      ${s.ultimaEm ? `Última ronda: ${esc(fmtDataHora(s.ultimaEm))} (${esc(s.ultimaJanela || '')}) ·
+        ${s.consultados} processo(s), ${s.comNovidade} com novidade${s.semResposta
+    ? `, ${s.semResposta} sem resposta` : ''}.`
+    : 'Nenhuma ronda executada ainda.'}
+      ${s.devida ? '<span class="selo selo--proximo">ronda pendente nesta janela</span>'
+    : s.motivo ? `<span class="selo selo--neutro">${esc(s.motivo)}</span>` : ''}
+    </div>
+    ${permissao === 'granted' ? '<div class="mini mudo">Avisos do sistema autorizados.</div>'
+    : permissao === 'indisponivel' ? ''
+      : `<button type="button" class="btn btn--pequeno" data-acao="permitir-avisos"
+          style="margin-top:.4rem">Autorizar avisos no dispositivo</button>`}`;
+}
 
 // Ordem da semana como se lê no calendário forense.
 const ROTULO_DIAS = [['seg', 'seg'], ['ter', 'ter'], ['qua', 'qua'], ['qui', 'qui'],
@@ -135,6 +166,7 @@ export function configuracoes() {
         <div class="campo"><label>Credencial</label>
           <input type="password" data-int-campo="${chave}:chave" value="${esc(i[chave]?.chave || i[chave]?.token || '')}"
             autocomplete="off"></div>
+        ${chave === 'tribunais' ? blocoRondas() : ''}
         ${chave === 'publicacoes' ? `<div class="campo"><label>Inscrições na OAB acompanhadas</label>
           <input data-int-campo="publicacoes:oabs" value="${esc(i.publicacoes?.oabs || '')}"
             placeholder="12345/PE, 67890/SP">
@@ -265,6 +297,18 @@ export function configuracoes() {
       auto[el.dataset.auto] = { ...auto[el.dataset.auto], ativo: el.checked };
     });
     db.salvarConfig({ automacoesWhatsapp: auto }); aviso('Automações atualizadas.', 'ok');
+  });
+  delegar(tela, 'change', '[data-ronda-ativa]', (_e, el) => {
+    registrarRonda({ ativo: el.checked });
+    aviso(el.checked ? 'Rondas de atualização ligadas.' : 'Rondas de atualização desligadas.', 'ok');
+  });
+  delegar(tela, 'click', '[data-acao="permitir-avisos"]', async () => {
+    if (typeof Notification === 'undefined') return;
+    const r = await Notification.requestPermission();
+    aviso(r === 'granted' ? 'Avisos autorizados.'
+      : 'Sem autorização, o aviso fica apenas na central de notificações.',
+    r === 'granted' ? 'ok' : 'atencao');
+    desenhar();
   });
   delegar(tela, 'click', '[data-acao="salvar-integracoes"]', () => {
     const integracoes = JSON.parse(JSON.stringify(db.config().integracoes));

@@ -139,7 +139,7 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
 
   let dados;
   try { dados = await resposta.json(); }
-  catch { return falha('O DataJud devolveu resposta ilegível.'); }
+  catch (e) { return falha(`O DataJud devolveu resposta ilegível. ${e.message}`); }
 
   const achados = dados?.hits?.hits || [];
   if (!achados.length) {

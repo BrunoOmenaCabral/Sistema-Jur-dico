@@ -91,7 +91,10 @@ export function configuracoesPadrao() {
       whatsapp: { ativo: false, provedor: '', numero: '', token: '' },
       email: { ativo: false, remetente: '', servidor: '' },
       calendario: { ativo: false, provedor: '' },
-      tribunais: { ativo: false, provedor: '', token: '' },
+      tribunais: { ativo: false, provedor: '', token: '',
+        // Rondas de atualização: manhã, tarde e noite, enquanto o sistema
+        // estiver aberto.
+        rondas: { ativo: true, ultimaChave: null, ultimaEm: null } },
     },
   };
 }

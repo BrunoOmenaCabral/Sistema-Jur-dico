@@ -9,6 +9,7 @@ import { detectarPonte } from './core/ponte.js';
 import { usuarioAtual, pode } from './core/auth.js';
 import { sincronizarNotificacoes, revisarVinculos } from './core/dominio.js';
 import { publicacoes as servicoPublicacoes } from './core/integracoes.js';
+import { rondaDevida, executarRonda, avisarNoDispositivo } from './core/rondas.js';
 import { interpretarPublicacao } from './core/ia.js';
 import { registrar, iniciarRoteador, aoTrocarRota, renderizar } from './ui/roteador.js';
 import { montarCasca, atualizarNavegacao, atualizarContadorNotificacoes } from './ui/casca.js';
@@ -161,6 +162,42 @@ async function rotinaDiaria() {
   if (servicoPublicacoes.devidaHoje()) {
     const r = await servicoPublicacoes.consultar();
     if (r.importadas) aviso(r.mensagem, 'ok', 6000);
+  }
+
+  ronda();
+  // Sistema aberto o dia todo atravessa as três janelas sem ser recarregado:
+  // a verificação periódica é o que faz a ronda da tarde e a da noite correrem.
+  setInterval(ronda, 10 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) ronda(); });
+}
+
+let rondaEmCurso = false;
+
+/**
+ * Ronda de atualização dos processos, se a desta janela ainda não correu.
+ *
+ * Roda em segundo plano: quem está trabalhando não espera pela consulta. O que
+ * mudou aparece na central de notificações e, havendo autorização, no aviso do
+ * próprio sistema operacional.
+ */
+async function ronda() {
+  if (rondaEmCurso) return;
+  const { devida } = rondaDevida();
+  if (!devida) return;
+
+  rondaEmCurso = true;
+  try {
+    const r = await executarRonda();
+    atualizarContadorNotificacoes();
+    if (r.novidades.length) {
+      avisarNoDispositivo(r.novidades);
+      aviso(`${r.novidades.length} processo(s) com movimentação nova. `
+        + 'Veja na central de notificações.', 'ok', 8000);
+    }
+  } catch (e) {
+    console.error('Ronda de atualização falhou', e);
+  } finally {
+    rondaEmCurso = false;
   }
 }
 

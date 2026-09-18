@@ -1357,6 +1357,136 @@ teste('contrato encerrado e quitado é arquivado; com dívida, não', () => {
   assert.equal(db.obter('financeiro', devendo.id).status, 'ativo');
 });
 
+console.log('\nRondas de atualização');
+
+const rondas = await import('../src/core/rondas.js');
+const emHora = (dia, hora) => new Date(2026, 8, dia, hora, 0, 0);
+
+teste('o dia se divide em manhã, tarde e noite', () => {
+  assert.equal(rondas.janelaDe(emHora(18, 9)).id, 'manha');
+  assert.equal(rondas.janelaDe(emHora(18, 14)).id, 'tarde');
+  assert.equal(rondas.janelaDe(emHora(18, 21)).id, 'noite');
+});
+teste('a madrugada pertence à noite do dia anterior', () => {
+  const j = rondas.janelaDe(emHora(19, 2));
+  assert.equal(j.id, 'noite');
+  assert.equal(j.dia, '2026-09-18');
+  assert.equal(j.chave, '2026-09-18:noite');
+});
+teste('cada janela tem chave própria, e o dia seguinte recomeça', () => {
+  const chaves = [emHora(18, 9), emHora(18, 14), emHora(18, 21), emHora(19, 9)]
+    .map((d) => rondas.janelaDe(d).chave);
+  assert.equal(new Set(chaves).size, 4);
+});
+
+// Cenários da ronda, com a consulta ao tribunal simulada.
+const fetchAntesRonda = globalThis.fetch;
+definirPonte(true, 'gru1');
+const processoRonda = db.inserir('processos', {
+  numeroCNJ: cnjValido(1501), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+});
+db.inserir('processos', {
+  numeroCNJ: cnjValido(1502), clienteId: processo.clienteId, status: 'arquivado', tribunal: 'TJPE',
+});
+
+const semRonda = rondas.rondaDevida(emHora(18, 9));
+rondas.registrarRonda({ ultimaChave: null, ultimaEm: null });
+
+// Os demais processos da base já foram verificados hoje: a fila começa pelo que
+// interessa a este cenário.
+db.listar('processos').filter((p) => p.status === 'ativo' && p.id !== processoRonda.id)
+  .forEach((p) => db.atualizar('processos', p.id, { ultimaConsultaTribunal: '2026-09-18' }));
+
+globalThis.fetch = async (url) => {
+  if (String(url).includes('/api/pje')) {
+    return { ok: true, status: 200, json: async () => ({ ok: true, encontrados: 0, html: '' }) };
+  }
+  return { ok: true, status: 200, text: async () => '{}', json: async () => ({ hits: { hits: [{
+    _source: { numeroProcesso: processoRonda.numeroCNJ.replace(/\D/g, ''), tribunal: 'TJPE', grau: 'G1',
+      classe: { nome: 'Procedimento Comum' }, orgaoJulgador: { nome: '1ª Vara' },
+      dataHoraUltimaAtualizacao: '2026-09-18T08:00:00.000Z',
+      movimentos: [{ codigo: 85, nome: 'Petição', dataHora: '2026-09-17T14:00:00.000Z' }] } }] } }) };
+};
+const rondaManha = await rondas.executarRonda({ agora: emHora(18, 9) });
+const mesmaJanela = rondas.rondaDevida(emHora(18, 10));
+const janelaSeguinte = rondas.rondaDevida(emHora(18, 14));
+globalThis.fetch = fetchAntesRonda;
+definirPonte(false);
+
+teste('a ronda é devida quando a janela ainda não correu', () => {
+  assert.equal(semRonda.devida, true);
+  assert.equal(semRonda.janela.id, 'manha');
+});
+teste('a ronda percorre os processos ativos e ignora os arquivados', () => {
+  assert.equal(rondaManha.consultados, rondas.filaDaRonda().length);
+  assert.ok(rondaManha.consultados >= 1);
+  assert.ok(!rondas.filaDaRonda().some((p) => p.status === 'arquivado'));
+});
+teste('movimento novo vira notificação com destino no processo', () => {
+  assert.equal(rondaManha.novidades.length >= 1, true);
+  const notificacao = db.listar('notificacoes').find((n) => n.tipo === 'movimentacao');
+  assert.ok(notificacao, 'nenhuma notificação de movimentação');
+  assert.match(notificacao.titulo, /Movimentação nova/);
+  assert.match(notificacao.rota, /^#\/processos\//);
+  assert.equal(notificacao.lida, false);
+});
+teste('a mesma novidade não notifica duas vezes', () => {
+  const antes = db.listar('notificacoes').filter((n) => n.tipo === 'movimentacao').length;
+  rondas.avisarNovidade({ processo: processoRonda, importados: 1 });
+  const depois = db.listar('notificacoes').filter((n) => n.tipo === 'movimentacao').length;
+  assert.equal(depois, antes);
+});
+teste('feita a ronda, a mesma janela não repete; a seguinte é devida', () => {
+  assert.equal(mesmaJanela.devida, false);
+  assert.equal(mesmaJanela.motivo, 'já feita');
+  assert.equal(janelaSeguinte.devida, true);
+  assert.equal(janelaSeguinte.janela.id, 'tarde');
+});
+teste('sem ponte de consultas a ronda não corre', () => {
+  definirPonte(false);
+  rondas.registrarRonda({ ultimaChave: null });
+  const r = rondas.rondaDevida(emHora(18, 14));
+  assert.equal(r.devida, false);
+  assert.match(r.motivo, /ponte/);
+});
+teste('desligada nas configurações, a ronda não corre', () => {
+  definirPonte(true, 'gru1');
+  rondas.registrarRonda({ ativo: false, ultimaChave: null });
+  assert.equal(rondas.rondaDevida(emHora(18, 14)).devida, false);
+  assert.equal(rondas.rondaDevida(emHora(18, 14)).motivo, 'desligada');
+  rondas.registrarRonda({ ativo: true });
+  definirPonte(false);
+});
+teste('a fila começa pelo processo sem verificação há mais tempo', () => {
+  db.atualizar('processos', processoRonda.id, { ultimaConsultaTribunal: '2026-09-18' });
+  const antigo = db.inserir('processos', { numeroCNJ: cnjValido(1503),
+    clienteId: processo.clienteId, status: 'ativo', ultimaConsultaTribunal: '2026-01-05' });
+  const fila = rondas.filaDaRonda(200);
+  assert.ok(fila.findIndex((p) => p.id === antigo.id)
+    < fila.findIndex((p) => p.id === processoRonda.id));
+});
+teste('tentativa frustrada conta como verificação, para a fila girar', () => {
+  const teimoso = db.inserir('processos', { numeroCNJ: cnjValido(1504),
+    clienteId: processo.clienteId, status: 'ativo' });
+  const fila = rondas.filaDaRonda(200);
+  assert.ok(fila.findIndex((p) => p.id === teimoso.id) >= 0);
+  db.atualizar('processos', teimoso.id, { ultimaTentativaTribunal: '2026-09-18' });
+  const depois = rondas.filaDaRonda(200);
+  const outro = db.inserir('processos', { numeroCNJ: cnjValido(1505),
+    clienteId: processo.clienteId, status: 'ativo', ultimaConsultaTribunal: '2026-02-01' });
+  const fila2 = rondas.filaDaRonda(200);
+  assert.ok(fila2.findIndex((p) => p.id === outro.id)
+    < fila2.findIndex((p) => p.id === teimoso.id),
+  'o processo cuja consulta falhou continuou à frente da fila');
+  assert.ok(depois.length >= 1);
+});
+teste('a situação das rondas descreve o acompanhamento', () => {
+  const s = rondas.situacaoDasRondas(emHora(18, 14));
+  assert.equal(typeof s.emAcompanhamento, 'number');
+  assert.equal(s.porRonda, 25);
+  assert.ok(s.ultimaEm);
+});
+
 console.log('\nOrdem dos processos');
 
 const { ordenarProcessos } = await import('../src/core/dominio.js');
