@@ -29,6 +29,8 @@ const { arquivadoEmDefinitivo, interpretarListaProcessos, tribunais, oabsMonitor
   publicacoes: servicoPublicacoes } = await import('../src/core/integracoes.js');
 const { agruparEmProcessos, comunicacaoComoPublicacao, consultarPorOAB, BASE_PADRAO, parsearOAB } =
   await import('../src/core/djen.js');
+const { readFileSync } = await import('node:fs');
+const amostraPJe = readFileSync(new URL('./amostras/pje-tjpe-detalhe.html', import.meta.url), 'utf8');
 const fin = await import('../src/core/financas.js');
 const { definirPonte: definirPonteInicial } = await import('../src/core/ponte.js');
 definirPonteInicial(false); // consultas diretas, salvo onde o teste disser o contrário
@@ -1357,6 +1359,97 @@ teste('contrato encerrado e quitado é arquivado; com dívida, não', () => {
   assert.equal(db.obter('financeiro', devendo.id).status, 'ativo');
 });
 
+console.log('\nCadastro preenchido pela consulta');
+
+const { consultarParaCadastro, siglaDoTribunal, ufDoTribunal } =
+  await import('../src/core/integracoes.js');
+const { lerCapaPJe } = await import('../src/core/pje.js');
+const capaPJe = lerCapaPJe(amostraPJe);
+
+teste('a capa do processo é lida da página do tribunal', () => {
+  assert.equal(capaPJe.numeroCNJ, '0007137-88.2026.8.17.2001');
+  assert.equal(capaPJe.classe, 'CUMPRIMENTO DE SENTENÇA');
+  assert.equal(capaPJe.dataDistribuicao, '2026-01-28');
+  assert.equal(capaPJe.vara, 'Seção B da 30ª Vara Cível da Capital');
+  assert.equal(capaPJe.comarca, 'Recife - Varas');
+});
+teste('as partes de cada polo são identificadas', () => {
+  assert.match(capaPJe.poloAtivo, /^WASHINGTON LUIZ/);
+  assert.match(capaPJe.poloPassivo, /^AMIL ASSIST/);
+  // Documento e situação ficam de fora: o cadastro quer o nome.
+  assert.ok(!/CNPJ/.test(capaPJe.poloAtivo));
+  assert.ok(!/Ativo/.test(capaPJe.poloPassivo));
+});
+teste('o assunto vem sem o código interno do tribunal', () => {
+  assert.equal(capaPJe.assunto, 'Serviços de Saúde');
+  assert.ok(!/\(\d/.test(capaPJe.assunto));
+});
+teste('o processo de referência é reconhecido', () => {
+  assert.equal(capaPJe.processoReferencia, '0104948-82.2025.8.17.2001');
+});
+teste('o tribunal e a UF saem do próprio número', () => {
+  assert.equal(siglaDoTribunal('00071378820268172001'), 'TJPE');
+  assert.equal(siglaDoTribunal('00008325820268190001'), 'TJRJ');
+  assert.equal(siglaDoTribunal('123'), '');
+  assert.equal(ufDoTribunal('TJPE'), 'PE');
+  assert.equal(ufDoTribunal('TRF5'), '');
+});
+
+// A consulta para cadastro, com as duas fontes simuladas.
+const fetchAntesCadastro = globalThis.fetch;
+definirPonte(true, 'gru1');
+
+globalThis.fetch = async (url) => (String(url).includes('/api/pje')
+  ? { ok: true, status: 200, json: async () => ({ ok: true, encontrados: 1, html: amostraPJe }) }
+  : { ok: true, status: 200, text: async () => '{}', json: async () => ({ hits: { hits: [] } }) });
+const peloTribunal = await consultarParaCadastro({ numeroCNJ: '00071378820268172001' });
+
+globalThis.fetch = async (url) => (String(url).includes('/api/pje')
+  ? { ok: true, status: 200, json: async () => ({ ok: true, encontrados: 0, html: '' }) }
+  : { ok: true, status: 200, text: async () => '{}', json: async () => ({ hits: { hits: [{
+    _source: { numeroProcesso: '00008325820268190001', tribunal: 'TJRJ', grau: 'G1',
+      classe: { nome: 'Procedimento Comum' }, orgaoJulgador: { nome: '1ª Vara Cível' },
+      assuntos: [{ nome: 'Cobrança' }], dataAjuizamento: '2026-02-03T10:00:00.000Z',
+      dataHoraUltimaAtualizacao: '2026-09-01T10:00:00.000Z', movimentos: [] } }] } }) });
+const peloCNJ = await consultarParaCadastro({ numeroCNJ: '00008325820268190001' });
+
+globalThis.fetch = async (url) => (String(url).includes('/api/pje')
+  ? { ok: true, status: 200, json: async () => ({ ok: true, encontrados: 0, html: '' }) }
+  : { ok: true, status: 200, text: async () => '{}', json: async () => ({ hits: { hits: [] } }) });
+const semFonte = await consultarParaCadastro({ numeroCNJ: '00008325820268190001' });
+const numeroCurto = await consultarParaCadastro({ numeroCNJ: '123' });
+globalThis.fetch = fetchAntesCadastro;
+definirPonte(false);
+
+teste('havendo consulta pública, o cadastro se preenche com ela', () => {
+  assert.equal(peloTribunal.ok, true);
+  assert.match(peloTribunal.fonte, /Consulta pública TJPE/);
+  assert.equal(peloTribunal.dados.tribunal, 'TJPE');
+  assert.equal(peloTribunal.dados.uf, 'PE');
+  assert.equal(peloTribunal.dados.comarca, 'Recife');
+  assert.equal(peloTribunal.dados.classe, 'CUMPRIMENTO DE SENTENÇA');
+  assert.match(peloTribunal.dados.poloAtivo, /WASHINGTON/);
+  assert.equal(peloTribunal.processoReferencia, '0104948-82.2025.8.17.2001');
+});
+teste('sem consulta pública, vale a base do CNJ', () => {
+  assert.equal(peloCNJ.ok, true);
+  assert.match(peloCNJ.fonte, /CNJ/);
+  assert.equal(peloCNJ.dados.tribunal, 'TJRJ');
+  assert.equal(peloCNJ.dados.uf, 'RJ');
+  assert.equal(peloCNJ.dados.classe, 'Procedimento Comum');
+  assert.equal(peloCNJ.dados.vara, '1ª Vara Cível');
+  assert.equal(peloCNJ.dados.dataDistribuicao, '2026-02-03');
+});
+teste('não achando em fonte alguma, a consulta diz o porquê', () => {
+  assert.equal(semFonte.ok, false);
+  assert.match(semFonte.motivo, /não encontrou/);
+  assert.ok(semFonte.detalhes.length >= 1);
+});
+teste('número incompleto é recusado antes de sair consultando', () => {
+  assert.equal(numeroCurto.ok, false);
+  assert.match(numeroCurto.motivo, /20 d[íi]gitos/);
+});
+
 console.log('\nRondas de atualização');
 
 const rondas = await import('../src/core/rondas.js');
@@ -1515,8 +1608,6 @@ console.log('\nConsulta pública do tribunal');
 
 const { lerDetalhePJe, movimentoPJeComoRegistro, tribunalPJe, documentoPJe } =
   await import('../src/core/pje.js');
-const { readFileSync } = await import('node:fs');
-const amostraPJe = readFileSync(new URL('./amostras/pje-tjpe-detalhe.html', import.meta.url), 'utf8');
 const lidoPJe = lerDetalhePJe(amostraPJe);
 
 teste('a página do tribunal é lida como lista de movimentos', () => {

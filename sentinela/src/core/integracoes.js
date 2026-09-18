@@ -274,6 +274,88 @@ export const publicacoes = {
   },
 };
 
+/**
+ * Dados do processo para o cadastro, buscados no tribunal.
+ *
+ * Primeiro a consulta pública do tribunal, que traz as partes e o juízo;
+ * depois a base do CNJ, que cobre os tribunais sem consulta própria atendida
+ * aqui. Não achando em nenhuma das duas, diz-se o porquê de cada uma.
+ */
+export async function consultarParaCadastro({ numeroCNJ, tribunal = '', sinal = null }) {
+  const numero = cnjDigitos(numeroCNJ);
+  if (numero.length !== 20) {
+    return { ok: false, motivo: 'Informe o número CNJ completo, com 20 dígitos.' };
+  }
+
+  const pje = await consultarPJe({ numeroCNJ: numero, tribunal, sinal });
+  if (pje.ok && pje.capa?.classe) {
+    const c = pje.capa;
+    return {
+      ok: true,
+      fonte: pje.fonte,
+      dados: {
+        numeroCNJ: numero,
+        tribunal: tribunal || siglaDoTribunal(numero),
+        uf: ufDoTribunal(tribunal || siglaDoTribunal(numero)),
+        comarca: c.comarca.replace(/\s*-\s*Varas?$/i, '').trim(),
+        vara: c.vara,
+        classe: c.classe,
+        assunto: c.assunto,
+        dataDistribuicao: c.dataDistribuicao,
+        poloAtivo: c.poloAtivo,
+        poloPassivo: c.poloPassivo,
+      },
+      processoReferencia: c.processoReferencia || '',
+      movimentos: pje.movimentos || [],
+    };
+  }
+
+  const cnj = await consultarDataJud({ numeroCNJ: numero, tribunal, sinal });
+  if (cnj.ok) {
+    const c = cnj.processo;
+    return {
+      ok: true,
+      fonte: 'Base pública do CNJ (DataJud)',
+      dados: {
+        numeroCNJ: numero,
+        tribunal: c.tribunal || tribunal || siglaDoTribunal(numero),
+        uf: ufDoTribunal(c.tribunal || tribunal || siglaDoTribunal(numero)),
+        vara: c.vara || '',
+        classe: c.classe || '',
+        assunto: c.assunto || '',
+        dataDistribuicao: c.dataDistribuicao || '',
+      },
+      processoReferencia: '',
+      movimentos: cnj.movimentos || [],
+    };
+  }
+
+  return {
+    ok: false,
+    motivo: 'A consulta não encontrou este processo.',
+    detalhes: [pje.motivo, cnj.motivo].filter(Boolean),
+  };
+}
+
+/** A sigla do tribunal está no próprio número: 8.17 é a Justiça Estadual de PE. */
+export function siglaDoTribunal(numeroCNJ) {
+  const d = cnjDigitos(numeroCNJ);
+  if (d.length !== 20) return '';
+  const uf = UF_POR_CODIGO[`${d.slice(13, 14)}.${d.slice(14, 16)}`];
+  return uf ? `TJ${uf}` : '';
+}
+
+export const ufDoTribunal = (sigla) => (/^TJ([A-Z]{2})$/.exec(String(sigla || '').toUpperCase())?.[1] || '');
+
+// Justiça Estadual: o par segmento/tribunal identifica a unidade federativa.
+const UF_POR_CODIGO = {
+  '8.01': 'AC', '8.02': 'AL', '8.03': 'AP', '8.04': 'AM', '8.05': 'BA', '8.06': 'CE',
+  '8.07': 'DF', '8.08': 'ES', '8.09': 'GO', '8.10': 'MA', '8.11': 'MT', '8.12': 'MS',
+  '8.13': 'MG', '8.14': 'PA', '8.15': 'PB', '8.16': 'PR', '8.17': 'PE', '8.18': 'PI',
+  '8.19': 'RJ', '8.20': 'RN', '8.21': 'RS', '8.22': 'RO', '8.23': 'RR', '8.24': 'SC',
+  '8.25': 'SE', '8.26': 'SP', '8.27': 'TO',
+};
+
 /* --------------------------------------------------- consulta processual -- */
 
 /**

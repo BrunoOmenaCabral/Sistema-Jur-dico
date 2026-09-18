@@ -23,7 +23,7 @@ import { abrirFormularioAudiencia } from './audiencias.js';
 import { abrirFormularioDocumento } from './documentos.js';
 import { abrirConsultaProcessual } from './primeiro-acesso.js';
 import { abrirFormularioCliente } from './clientes.js';
-import { atualizarPeloTribunal } from '../core/integracoes.js';
+import { atualizarPeloTribunal, consultarParaCadastro } from '../core/integracoes.js';
 import { interpretarPublicacao } from '../core/ia.js';
 import { INDICES, indiceDoProcesso } from '../core/datajud.js';
 
@@ -129,7 +129,14 @@ export function fichaProcesso(id) {
   const tarefas = db.listar('tarefas', { processoId: id });
   const audiencias = db.listar('audiencias', { processoId: id });
   const documentos = db.listar('documentos', { processoId: id });
-  const publicacoes = db.listar('publicacoes', { processoId: id });
+  // Na ficha do processo interessa o que ainda não foi conferido: publicação
+  // já confirmada, dispensada ou arquivada virou prazo, tarefa ou nada, e
+  // repeti-la aqui esconde o que de fato pede atenção. O histórico completo
+  // permanece na fila de Publicações e na linha do tempo.
+  const publicacoes = db.listar('publicacoes', { processoId: id })
+    .filter((x) => x.status === 'pendente');
+  const publicacoesTratadas = db.listar('publicacoes', { processoId: id })
+    .filter((x) => x.status !== 'pendente').length;
   const timeline = linhaDoTempo(id);
 
   const tela = h(`<div>
@@ -189,7 +196,7 @@ export function fichaProcesso(id) {
       <div class="aba" data-aba="prazos">Prazos (${prazos.length})</div>
       <div class="aba" data-aba="audiencias">Audiências (${audiencias.length})</div>
       <div class="aba" data-aba="tarefas">Tarefas (${tarefas.length})</div>
-      <div class="aba" data-aba="publicacoes">Publicações (${publicacoes.length})</div>
+      <div class="aba" data-aba="publicacoes">Publicações a conferir (${publicacoes.length})</div>
       <div class="aba" data-aba="documentos">Documentos (${documentos.length})</div>
       <div class="aba" data-aba="historico">Auditoria</div>
     </div>
@@ -235,7 +242,13 @@ export function fichaProcesso(id) {
         <div class="lista__corpo"><div class="lista__titulo">${esc(fmtData(x.dataPublicacao))} — ${esc(x.diario || '')}</div>
         <div class="lista__meta quebra">${esc(String(x.conteudo).slice(0, 200))}…</div></div>
         <div class="lista__lado"><span class="selo selo--${x.status === 'pendente' ? 'proximo' : 'ok'}">${esc(x.status)}</span></div>
-      </li>`).join('')}</ul>` : '<div class="vazio">Nenhuma publicação vinculada.</div>',
+      </li>`).join('')}</ul>
+      ${publicacoesTratadas ? `<div class="mini mudo" style="padding:.6rem">
+        ${publicacoesTratadas} publicação(ões) já conferida(s) não aparecem aqui.
+        <a href="#/publicacoes">Ver a fila completa</a>.</div>` : ''}`
+    : `<div class="vazio"><span class="ico">✅</span>Nenhuma publicação aguardando conferência.
+        ${publicacoesTratadas ? `<div class="mini mudo">${publicacoesTratadas} já conferida(s) —
+          <a href="#/publicacoes">ver a fila completa</a>.</div>` : ''}</div>`,
 
     documentos: () => documentos.length ? `<ul class="lista">${documentos.map((d) => `
       <li class="lista__item"><span class="lista__faixa" style="background:var(--c-normal)"></span>
@@ -459,7 +472,88 @@ export function abrirFormularioProcesso(valores = {}, aoConcluir) {
     abrir: (aoCriar) => abrirFormularioCliente({}, aoCriar),
   });
 
+  if (!edicao) acoplarConsultaDeCadastro(ref);
+
   return ref;
+}
+
+/* ------------------------------------- preenchimento pela consulta ------- */
+
+// O que a consulta ao tribunal sabe preencher, e como se chama na tela.
+const CAMPOS_DA_CONSULTA = {
+  tribunal: 'tribunal', uf: 'UF', comarca: 'comarca', vara: 'vara', classe: 'classe',
+  assunto: 'assunto', dataDistribuicao: 'data de distribuição',
+  poloAtivo: 'polo ativo', poloPassivo: 'polo passivo',
+};
+
+/**
+ * Botão de consulta ao lado do número.
+ *
+ * Digitado o número, o tribunal responde com capa e partes, e o que vier
+ * preenche o que ainda está em branco — o que o usuário digitou não é
+ * sobrescrito. Não vindo nada, diz-se que o cadastro terá de ser manual, com o
+ * motivo de cada fonte.
+ */
+function acoplarConsultaDeCadastro(ref) {
+  const form = ref.form;
+  const campoNumero = form.elements.numeroCNJ?.closest('.campo');
+  if (!campoNumero) return;
+
+  const botao = h('<button type="button" class="btn btn--pequeno" data-acao="consultar-cnj"'
+    + ' style="align-self:start;margin-top:.2rem">Consultar no tribunal</button>');
+  campoNumero.appendChild(botao);
+  // O resultado ocupa a largura do formulário: espremido na coluna do número,
+  // o texto fica ilegível.
+  const situacao = ref.avisos;
+
+  botao.addEventListener('click', async () => {
+    const numero = cnjDigitos(form.elements.numeroCNJ.value);
+    if (numero.length !== 20) {
+      situacao.innerHTML = '<span class="texto-fatal">Informe o número completo, com 20 dígitos, '
+        + 'antes de consultar.</span>';
+      return;
+    }
+    botao.disabled = true;
+    const rotulo = botao.textContent;
+    botao.textContent = 'Consultando…';
+    situacao.innerHTML = 'Procurando o processo no tribunal e na base do CNJ…';
+
+    try {
+      const r = await consultarParaCadastro({ numeroCNJ: numero, tribunal: form.elements.tribunal.value });
+      if (!r.ok) {
+        situacao.innerHTML = `<div class="aviso aviso--atencao">${esc(r.motivo)}
+          Preencha os dados à mão.
+          ${r.detalhes?.length ? `<div class="mini mudo">${esc(r.detalhes.join(' · '))}</div>` : ''}</div>`;
+        return;
+      }
+
+      const preenchidos = [];
+      const mantidos = [];
+      for (const [campo, rotuloCampo] of Object.entries(CAMPOS_DA_CONSULTA)) {
+        const valor = r.dados[campo];
+        const el = form.elements[campo];
+        if (!el || !valor) continue;
+        if (String(el.value).trim()) { mantidos.push(rotuloCampo); continue; }
+        el.value = valor;
+        preenchidos.push(rotuloCampo);
+      }
+
+      situacao.innerHTML = `<div class="aviso aviso--ok">
+        ${preenchidos.length ? `Preenchido pela consulta: ${esc(preenchidos.join(', '))}.`
+    : 'A consulta encontrou o processo, mas os campos já estavam preenchidos.'}
+        <div class="mini mudo">Fonte: ${esc(r.fonte)}${mantidos.length
+    ? ` · mantido o que já havia em ${esc(mantidos.join(', '))}` : ''}${r.processoReferencia
+    ? ` · processo de referência ${esc(fmtCNJ(r.processoReferencia))}` : ''}</div>
+        <div class="mini mudo">Confira antes de cadastrar: a consulta é apoio, não substitui a
+        conferência.</div></div>`;
+    } catch (e) {
+      situacao.innerHTML = `<div class="aviso aviso--alerta">A consulta não pôde ser feita:
+        ${esc(e.message)} Preencha os dados à mão.</div>`;
+    } finally {
+      botao.disabled = false;
+      botao.textContent = rotulo;
+    }
+  });
 }
 
 /* ----------------------------------------- arquivamento e exclusão ------- */

@@ -41,6 +41,24 @@ function jarra() {
   };
 }
 
+/**
+ * Texto da resposta na codificação que o tribunal declarou.
+ *
+ * O PJe serve ISO-8859-1 e, na própria página, anuncia UTF-8 na marcação. Vale
+ * o cabeçalho: lendo como UTF-8, todo acento fora de entidade HTML vira
+ * caractere inválido, e nome de parte e assunto chegam corrompidos.
+ */
+async function texto(resposta) {
+  const tipo = resposta.headers.get('content-type') || '';
+  const charset = (/charset=([^;\s]+)/i.exec(tipo)?.[1] || 'utf-8').toLowerCase();
+  const bytes = await resposta.arrayBuffer();
+  try {
+    return new TextDecoder(charset).decode(bytes);
+  } catch {
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+}
+
 /** Busca seguindo redirecionamento à mão, para não perder os cookies do caminho. */
 async function ir(url, opcoes, pote, saltos = 5) {
   const resposta = await fetch(url, {
@@ -76,7 +94,7 @@ module.exports = async (req, res) => {
   try {
     // 1. A página da consulta, que traz a sessão e o comando de pesquisa.
     const inicial = await ir(consulta, { method: 'GET' }, pote);
-    const pagina = await inicial.text();
+    const pagina = await texto(inicial);
     if (!inicial.ok) {
       return res.status(502).json({ erro: `O ${tribunal.toUpperCase()} respondeu `
         + `${inicial.status} à abertura da consulta.`, regiao: process.env.VERCEL_REGION || null });
@@ -137,7 +155,7 @@ module.exports = async (req, res) => {
         Referer: consulta },
       body: campos.toString(),
     }, pote);
-    const resultado = await busca.text();
+    const resultado = await texto(busca);
 
     const link = /openPopUp\('[^']*','(\/[^']*DetalheProcessoConsultaPublica\/listView\.seam\?ca=[^']+)'\)/
       .exec(resultado);
@@ -152,7 +170,7 @@ module.exports = async (req, res) => {
     // 3. O detalhe, com as movimentações.
     const detalhe = await ir(new URL(link[1].replace(/&amp;/g, '&'), enderecoPost).toString(),
       { method: 'GET' }, pote);
-    const html = await detalhe.text();
+    const html = await texto(detalhe);
     if (!detalhe.ok) {
       return res.status(502).json({ erro: `O tribunal respondeu ${detalhe.status} ao detalhe do `
         + 'processo.', regiao: process.env.VERCEL_REGION || null });

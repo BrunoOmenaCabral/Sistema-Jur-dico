@@ -119,6 +119,64 @@ const paraISO = (d) => {
  * tribunal. Cada linha vem como "DD/MM/AAAA HH:MM:SS - Título do movimento",
  * e a coluna ao lado traz o documento, quando é público.
  */
+/**
+ * Código interno entre parênteses no fim — "(156)" — não é informação para o
+ * cadastro. O parêntese vem às vezes sem fechar, porque a própria página corta
+ * o assunto no meio.
+ */
+const semCodigo = (s) => String(s || '').replace(/\s*\(\d+\)?\s*$/, '').trim();
+
+/**
+ * Dados do processo, como o tribunal os apresenta.
+ *
+ * A página traz pares rótulo/valor; lê-se por rótulo, e não por posição, porque
+ * a ordem muda conforme o que o processo tem preenchido.
+ */
+export function lerCapaPJe(html) {
+  const bruto = String(html || '');
+  const pares = new Map();
+  const blocos = bruto.matchAll(
+    /<div class="propertyView[^"]*">\s*<div class="name">([\s\S]*?)<\/div>\s*<div class="value[^"]*">([\s\S]*?)<\/div>\s*<\/div>/g);
+  for (const b of blocos) {
+    const rotulo = texto(b[1]).replace(/:$/, '');
+    if (rotulo) pares.set(rotulo.toLowerCase(), texto(b[2]));
+  }
+
+  // O órgão julgador vem em bloco sem rótulo, marcado em negrito, com o endereço
+  // logo abaixo, dentro de outra divisão.
+  const orgao = /<b>\s*(?:Órgão|&Oacute;rg&atilde;o)[\s\S]{0,20}?Julgador\s*<\/b>([\s\S]*?)<div/i
+    .exec(bruto);
+
+  const assunto = pares.get('assunto') || '';
+  return {
+    numeroCNJ: pares.get('número processo') || '',
+    dataDistribuicao: paraISO(pares.get('data da distribuição')),
+    classe: semCodigo(pares.get('classe judicial')),
+    // O assunto vem em cadeia, do geral ao específico; o último é o que
+    // identifica a causa.
+    assunto: semCodigo(assunto.split(' - ').at(-1) || ''),
+    assuntoCompleto: assunto,
+    comarca: pares.get('jurisdição') || '',
+    vara: orgao ? texto(orgao[1]) : '',
+    processoReferencia: pares.get('processo referência') || '',
+    ...lerPartesPJe(bruto),
+  };
+}
+
+/** Primeira parte de cada polo: é quem o cadastro identifica. */
+export function lerPartesPJe(html) {
+  const bruto = String(html || '');
+  const doPolo = (polo) => {
+    const corpo = new RegExp(`<tbody id="[^"]*processoPartes${polo}ResumidoList:tb">([\\s\\S]*?)<\/tbody>`)
+      .exec(bruto);
+    if (!corpo) return '';
+    const primeira = corpo[1].split(/<tr[^>]*>/).slice(1)[0] || '';
+    // O nome vem antes do documento; o resto da célula é situação e estilo.
+    return texto(primeira).split(/\s+-\s+(?:CPF|CNPJ)/)[0].replace(/\s*\([^)]*\)\s*$/, '').trim();
+  };
+  return { poloAtivo: doPolo('PoloAtivo'), poloPassivo: doPolo('PoloPassivo') };
+}
+
 export function lerDetalhePJe(html) {
   const bruto = String(html || '');
   const corpo = /<tbody id="[^"]*processoEvento:tb">([\s\S]*?)<\/tbody>/.exec(bruto);
@@ -143,6 +201,7 @@ export function lerDetalhePJe(html) {
 
   const total = /([\d.]+)\s*resultados? encontrados?/.exec(texto(bruto.slice(bruto.indexOf('processoEvento:tb'))));
   return {
+    capa: lerCapaPJe(bruto),
     movimentos,
     total: total ? Number(total[1].replace(/\./g, '')) : movimentos.length,
     // A consulta pública mostra uma página por vez, da mais recente para a mais
