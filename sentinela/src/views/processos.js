@@ -610,8 +610,16 @@ export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
             ${r.complementados.length
     ? `<div class="mini mudo">Capa complementada: ${esc(r.complementados.join(', '))}.</div>` : ''}
             <div class="mini mudo">Classe: ${esc(r.capa.classe || '—')} · Órgão: ${esc(r.capa.vara || '—')}</div>
+            ${r.consultaPublica?.ok ? `<div class="aviso aviso--ok" style="margin-top:.5rem">
+              Consulta direta ao tribunal: ${r.consultaPublica.lidos} movimento(s) mais recentes
+              ${r.consultaPublica.parcial ? `de ${r.consultaPublica.total} existentes — os
+                anteriores vêm da base do CNJ` : ''}.
+              <div class="mini">${esc(r.consultaPublica.fonte || '')}</div></div>`
+    : r.consultaPublica && !r.consultaPublica.indisponivel ? `<div class="mini mudo" style="margin-top:.5rem">
+              Consulta direta ao tribunal indisponível: ${esc(r.consultaPublica.motivo || '')}
+              O andamento abaixo vem apenas da base pública do CNJ.</div>` : ''}
             ${r.ultimoMovimentoEm ? `<div class="aviso aviso--${atrasoDaBase(r.ultimoMovimentoEm) > 2 ? 'atencao' : 'info'}"
-              style="margin-top:.5rem">O andamento disponível na base pública do CNJ vai até
+              style="margin-top:.5rem">O andamento disponível vai até
               <strong>${esc(fmtData(r.ultimoMovimentoEm))}</strong>${atrasoDaBase(r.ultimoMovimentoEm) > 2
     ? ` — ${atrasoDaBase(r.ultimoMovimentoEm)} dias atrás. O que ocorreu depois disso ainda não
         foi enviado pelo tribunal e não pode ser importado por aqui.` : '.'}</div>` : ''}

@@ -1218,6 +1218,112 @@ teste('cada relação tem recíproca declarada e rótulo legível', () => {
   assert.equal(rotuloRelacao('inexistente'), 'Conexo');
 });
 
+/* ------------------ consulta pública do tribunal (PJe) -------------------- */
+
+console.log('\nConsulta pública do tribunal');
+
+const { lerDetalhePJe, movimentoPJeComoRegistro, tribunalPJe, documentoPJe } =
+  await import('../src/core/pje.js');
+const { readFileSync } = await import('node:fs');
+const amostraPJe = readFileSync(new URL('./amostras/pje-tjpe-detalhe.html', import.meta.url), 'utf8');
+const lidoPJe = lerDetalhePJe(amostraPJe);
+
+teste('a página do tribunal é lida como lista de movimentos', () => {
+  // Amostra real da consulta pública do TJPE, processo 0007137-88.2026.8.17.2001.
+  assert.equal(lidoPJe.movimentos.length, 15);
+  assert.equal(lidoPJe.total, 180);
+  assert.equal(lidoPJe.parcial, true);
+});
+teste('o movimento do dia consta com data, hora e título', () => {
+  const primeiro = lidoPJe.movimentos[0];
+  assert.equal(primeiro.data, '2026-09-17');
+  assert.equal(primeiro.hora, '08:44:17');
+  assert.match(primeiro.titulo, /Juntada de Petição/);
+});
+teste('acentuação da página do tribunal é restituída', () => {
+  assert.ok(lidoPJe.movimentos.some((m) => m.titulo === 'Outras Decisões'));
+  assert.ok(lidoPJe.movimentos.some((m) => /Conclusos para decisão/.test(m.titulo)));
+});
+teste('o documento público do ato é reconhecido', () => {
+  const comDoc = lidoPJe.movimentos.find((m) => m.documento);
+  assert.ok(comDoc, 'nenhum movimento trouxe documento');
+  assert.match(comDoc.titulo, /Decis/);
+  const registro = movimentoPJeComoRegistro(comDoc);
+  assert.match(registro.linkTeor, /documentoSemLoginHTML\.seam\?ca=/);
+  assert.equal(registro.fonteTeor, 'consulta pública do tribunal');
+});
+teste('movimentos do mesmo dia não se confundem', () => {
+  const doDia = lidoPJe.movimentos.filter((m) => m.data === '2026-09-15');
+  assert.ok(doDia.length > 1);
+  const chaves = new Set(doDia.map((m) => movimentoPJeComoRegistro(m).chaveExterna));
+  assert.equal(chaves.size, doDia.length);
+});
+// A atualização com as duas fontes: a consulta pública cobre o período recente,
+// a base do CNJ completa o histórico anterior.
+const processoTJPE = db.inserir('processos', {
+  numeroCNJ: '00071378820268172001', clienteId: processo.clienteId, status: 'ativo',
+  tribunal: 'TJPE',
+});
+const fetchAnteriorPJe = globalThis.fetch;
+definirPonte(true, 'gru1');
+globalThis.fetch = async (url) => {
+  const endereco = String(url);
+  if (endereco.includes('/api/pje')) {
+    return { ok: true, status: 200,
+      json: async () => ({ ok: true, encontrados: 1, html: amostraPJe }) };
+  }
+  // A base do CNJ, parada em julho, com um movimento que a consulta também tem.
+  return { ok: true, status: 200, text: async () => '{}', json: async () => ({ hits: { hits: [{
+    _source: {
+      numeroProcesso: '00071378820268172001', tribunal: 'TJPE', grau: 'G1',
+      classe: { nome: 'Cumprimento Provisório de Decisão' },
+      orgaoJulgador: { nome: '30ª VARA CÍVEL DA CAPITAL' },
+      dataHoraUltimaAtualizacao: '2026-08-12T11:58:43.386000Z',
+      movimentos: [
+        { codigo: 26, nome: 'Distribuição', dataHora: '2026-01-28T10:00:00.000Z' },
+        { codigo: 85, nome: 'Petição', dataHora: '2026-07-31T10:00:00.000Z' },
+        { codigo: 51, nome: 'Conclusão', dataHora: '2026-09-11T10:00:00.000Z' },
+      ],
+    } }] } }) };
+};
+const atualizacaoTJPE = await atualizarPeloTribunal(processoTJPE.id);
+globalThis.fetch = fetchAnteriorPJe;
+definirPonte(false);
+
+teste('a atualização traz o movimento do dia, que o CNJ ainda não tem', () => {
+  assert.equal(atualizacaoTJPE.ok, true);
+  const linha = db.listar('movimentacoes', { processoId: processoTJPE.id });
+  const doDia = linha.find((m) => m.data === '2026-09-17');
+  assert.ok(doDia, 'o movimento de 17/09 não foi importado');
+  assert.match(doDia.titulo, /Juntada de Petição/);
+  assert.equal(atualizacaoTJPE.ultimoMovimentoEm, '2026-09-17');
+});
+teste('a consulta pública prevalece no período que alcança', () => {
+  // 11/09 está dentro da janela da consulta pública: o registro do CNJ para o
+  // mesmo período não entra de novo, para o ato não aparecer em duplicidade.
+  const onze = db.listar('movimentacoes', { processoId: processoTJPE.id })
+    .filter((m) => m.data === '2026-09-11');
+  assert.ok(onze.every((m) => String(m.chaveExterna).startsWith('pje:')));
+});
+teste('o histórico anterior continua vindo da base do CNJ', () => {
+  const linha = db.listar('movimentacoes', { processoId: processoTJPE.id });
+  assert.ok(linha.some((m) => m.data === '2026-01-28' && String(m.chaveExterna).startsWith('datajud:')));
+  assert.ok(linha.some((m) => m.data === '2026-07-31' && String(m.chaveExterna).startsWith('datajud:')));
+});
+teste('a atualização relata o que a consulta pública trouxe', () => {
+  assert.equal(atualizacaoTJPE.consultaPublica.ok, true);
+  assert.equal(atualizacaoTJPE.consultaPublica.lidos, 15);
+  assert.equal(atualizacaoTJPE.consultaPublica.total, 180);
+  assert.equal(atualizacaoTJPE.consultaPublica.parcial, true);
+});
+
+teste('o tribunal é deduzido do número CNJ', () => {
+  assert.equal(tribunalPJe({ numeroCNJ: '0007137-88.2026.8.17.2001' }), 'tjpe');
+  assert.equal(tribunalPJe({ numeroCNJ: cnjValido(1) }), null);
+  assert.equal(tribunalPJe({ numeroCNJ: '', tribunal: 'TJPE' }), 'tjpe');
+  assert.match(documentoPJe('tjpe', '1g', 'abc'), /^https:\/\/pje\.tjpe\.jus\.br\/1g\//);
+});
+
 console.log('\nCabeçalho das fichas');
 
 const { cabecalhoPagina } = await import('../src/ui/componentes.js');

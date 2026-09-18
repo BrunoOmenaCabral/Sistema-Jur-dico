@@ -8,7 +8,7 @@ module.exports = (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({
     ok: true,
-    servicos: ['datajud', 'djen'],
+    servicos: ["datajud", "djen", "pje"],
     // O serviço de comunicações do CNJ só atende acesso originado do Brasil.
     // Saber de onde a função executa torna o diagnóstico imediato.
     regiao: process.env.VERCEL_REGION || null,

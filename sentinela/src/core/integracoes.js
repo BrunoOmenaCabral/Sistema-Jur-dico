@@ -13,6 +13,7 @@ import { interpretarPublicacao, extrairNumerosCNJ } from './ia.js';
 import { consultarPorOAB as consultarDJEN, consultarPorProcesso as consultarDJENProcesso,
   agruparEmProcessos, comunicacaoComoPublicacao, parsearOAB } from './djen.js';
 import { consultarProcesso as consultarDataJud, ehAtoDecisorio } from './datajud.js';
+import { consultarPJe, movimentoPJeComoRegistro } from './pje.js';
 
 /* -------------------------------------------------------------- arquivo -- */
 
@@ -443,9 +444,22 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
   });
   if (!r.ok) return { ok: false, motivo: r.motivo, importados: 0 };
 
+  // A base do CNJ é alimentada em lotes e costuma ficar dias atrás dos autos.
+  // Onde há consulta pública do próprio tribunal, ela responde com o andamento
+  // do momento e prevalece no período que alcança.
+  const daConsulta = await consultarPJe({
+    numeroCNJ: processo.numeroCNJ, tribunal: processo.tribunal, sinal,
+  });
+
   // Havendo ato decisório, busca-se o texto que o publicou. Primeiro no que já
   // está na base, que nada custa, depois no diário.
   let movimentos = r.movimentos;
+  if (daConsulta.ok && daConsulta.movimentos.length) {
+    const doTribunal = daConsulta.movimentos.map((m) => movimentoPJeComoRegistro(m));
+    // O trecho que a consulta pública cobre vem dela; o anterior, da base do CNJ.
+    const inicio = doTribunal.map((m) => m.data).filter(Boolean).sort()[0];
+    movimentos = [...doTribunal, ...movimentos.filter((m) => !inicio || m.data < inicio)];
+  }
   let comTeor = 0;
   let motivoTeor = null;
   let consultadas = 0;
@@ -539,11 +553,25 @@ export async function atualizarPeloTribunal(processoId, { indice = null, sinal =
     ok: true,
     motivo: null,
     indice: r.indice,
+    // O que a consulta direta ao tribunal trouxe, e por que não trouxe, quando
+    // for o caso: é o que distingue processo sem andamento de consulta falha.
+    consultaPublica: {
+      ok: Boolean(daConsulta.ok),
+      motivo: daConsulta.ok ? null : daConsulta.motivo,
+      // Tribunal ainda não atendido ou hospedagem sem ponte não é falha a
+      // relatar a cada consulta: é limite conhecido.
+      indisponivel: Boolean(daConsulta.indisponivel),
+      fonte: daConsulta.fonte || null,
+      lidos: daConsulta.movimentos?.length || 0,
+      total: daConsulta.total || 0,
+      parcial: Boolean(daConsulta.parcial),
+    },
     // As instâncias consultadas e a data em que cada tribunal alimentou a base:
     // é o que explica por que um movimento recente pode ainda não constar.
     graus: r.graus || [],
     // Data do movimento mais recente que a base do CNJ tem deste processo.
-    ultimoMovimentoEm: r.ultimoMovimentoEm || null,
+    ultimoMovimentoEm: movimentos.map((m) => m.data).filter(Boolean).sort().at(-1)
+      || r.ultimoMovimentoEm || null,
     importados,
     total: movimentos.length,
     repetidos: movimentos.length - importados,
