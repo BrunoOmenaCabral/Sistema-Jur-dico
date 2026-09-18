@@ -43,6 +43,8 @@ function campoHTML(c, valor) {
       <input type="checkbox" id="${id}" name="${c.nome}" ${valor ? 'checked' : ''} ${attrs}>
       <label for="${id}">${esc(c.rotulo)}</label>${ajuda}</div>`);
   }
+  if (c.tipo === 'autocompletar') return campoAutocompletar(c, valor, id, obrig, ajuda);
+
   if (c.tipo === 'select') {
     const ops = (c.opcoes || []).map((o) => {
       const v = typeof o === 'string' ? o : o.valor;
@@ -62,13 +64,151 @@ function campoHTML(c, valor) {
     <input type="${tipo}" id="${id}" name="${c.nome}" value="${esc(valor)}" ${passo} ${attrs}>${ajuda}</div>`);
 }
 
+
+/* ------------------------------------------------ campo com sugestões ---- */
+
+const semAcento = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const soDigitos = (s) => String(s || '').replace(/\D/g, '');
+
+/**
+ * Campo de texto que sugere registros já cadastrados enquanto se digita.
+ *
+ * Serve ao número de processo: digitando-se os primeiros algarismos, aparece o
+ * que já existe na base; não aparecendo nada, o que foi digitado vale como está,
+ * porque o processo pode ainda não ter sido cadastrado.
+ *
+ * `opcoes`: [{ valor, rotulo, secundario, termos }]. O campo devolve
+ * `{ id, texto }`: o identificador do registro escolhido, quando houve escolha,
+ * e sempre o texto tal como digitado.
+ */
+function campoAutocompletar(c, valor, id, obrig, ajuda) {
+  const opcoes = (c.opcoes || []).map((o) => ({
+    ...o,
+    busca: semAcento(`${o.rotulo || ''} ${o.secundario || ''} ${o.termos || ''}`),
+    digitos: soDigitos(`${o.rotulo || ''} ${o.termos || ''}`),
+  }));
+
+  const caixa = h(`<div class="campo">
+    <label for="${id}">${esc(c.rotulo)}${obrig}</label>
+    <div class="sugestao">
+      <input type="text" id="${id}" autocomplete="off" role="combobox" aria-expanded="false"
+        aria-autocomplete="list" value="${esc(valor)}" placeholder="${esc(c.placeholder || '')}">
+      <input type="hidden" name="${c.nome}" value="">
+    </div>
+    <span class="campo__escolhido mini mudo"></span>${ajuda}</div>`);
+
+  const entrada = qs('input[type="text"]', caixa);
+  const oculto = qs('input[type="hidden"]', caixa);
+  const escolhido = qs('.campo__escolhido', caixa);
+
+  // A lista fica presa ao corpo da página: dentro do formulário ela seria
+  // cortada pela rolagem do modal, e a sugestão que não se vê não serve.
+  const lista = h('<ul class="sugestao__lista" role="listbox" hidden></ul>');
+  let visiveis = [];
+  let marcado = -1;
+
+  const posicionar = () => {
+    const r = entrada.getBoundingClientRect();
+    lista.style.left = `${r.left}px`;
+    lista.style.width = `${r.width}px`;
+    // Abre para cima quando não há espaço abaixo.
+    const espacoAbaixo = window.innerHeight - r.bottom;
+    if (espacoAbaixo < 180 && r.top > espacoAbaixo) {
+      lista.style.top = 'auto';
+      lista.style.bottom = `${window.innerHeight - r.top + 2}px`;
+    } else {
+      lista.style.bottom = 'auto';
+      lista.style.top = `${r.bottom + 2}px`;
+    }
+  };
+
+  const fechar = () => {
+    lista.hidden = true; lista.innerHTML = ''; visiveis = []; marcado = -1;
+    lista.remove();
+    entrada.setAttribute('aria-expanded', 'false');
+  };
+
+  const marcar = (i) => {
+    marcado = i;
+    [...lista.children].forEach((el, n) => el.classList.toggle('sugestao__item--ativo', n === i));
+  };
+
+  const escolher = (o) => {
+    oculto.value = o.valor;
+    entrada.value = o.rotulo;
+    escolhido.textContent = o.secundario || '';
+    fechar();
+    entrada.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const filtrar = () => {
+    const texto = semAcento(entrada.value.trim());
+    const digitos = soDigitos(entrada.value);
+    if (!texto) { fechar(); return; }
+
+    visiveis = opcoes.filter((o) => (digitos.length >= 2 && o.digitos.includes(digitos))
+      || (texto.length >= 2 && o.busca.includes(texto))).slice(0, 8);
+
+    if (!visiveis.length) { fechar(); return; }
+    lista.innerHTML = visiveis.map((o, i) => `<li class="sugestao__item" role="option" data-i="${i}">
+      <span class="negrito">${esc(o.rotulo)}</span>
+      ${o.secundario ? `<span class="mini mudo">${esc(o.secundario)}</span>` : ''}</li>`).join('');
+    if (!lista.isConnected) document.body.appendChild(lista);
+    lista.hidden = false;
+    posicionar();
+    entrada.setAttribute('aria-expanded', 'true');
+    marcar(0);
+  };
+
+  // Rolagem e redimensionamento movem o campo; a lista acompanha. Fechado o
+  // formulário, o campo sai da página e os ouvintes saem com ele.
+  const acompanhar = () => {
+    if (!entrada.isConnected) {
+      fechar();
+      window.removeEventListener('scroll', acompanhar, true);
+      window.removeEventListener('resize', acompanhar);
+      return;
+    }
+    if (!lista.hidden) posicionar();
+  };
+  window.addEventListener('scroll', acompanhar, true);
+  window.addEventListener('resize', acompanhar);
+
+  entrada.addEventListener('input', () => {
+    // Texto alterado depois da escolha deixa de corresponder ao registro.
+    oculto.value = '';
+    escolhido.textContent = '';
+    filtrar();
+  });
+  entrada.addEventListener('focus', filtrar);
+  entrada.addEventListener('blur', () => setTimeout(fechar, 150));
+  entrada.addEventListener('keydown', (ev) => {
+    if (lista.hidden) return;
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); marcar(Math.min(marcado + 1, visiveis.length - 1)); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); marcar(Math.max(marcado - 1, 0)); }
+    else if (ev.key === 'Enter' && visiveis[marcado]) { ev.preventDefault(); escolher(visiveis[marcado]); }
+    else if (ev.key === 'Escape') fechar();
+  });
+  lista.addEventListener('mousedown', (ev) => {
+    const item = ev.target.closest('.sugestao__item');
+    if (item) { ev.preventDefault(); escolher(visiveis[Number(item.dataset.i)]); }
+  });
+
+  return caixa;
+}
+
 export function lerFormulario(form, campos) {
   const dados = {};
   for (const c of campos) {
     if (c.tipo === 'separador') continue;
     const el = form.elements[c.nome];
     if (!el) continue;
-    if (c.tipo === 'checkbox') dados[c.nome] = el.checked;
+    if (c.tipo === 'autocompletar') {
+      // Devolve o registro escolhido e o texto digitado: sem escolha, o texto é
+      // o que vale, porque pode se referir a algo ainda não cadastrado.
+      const texto = form.querySelector(`#f_${c.nome}`)?.value.trim() || '';
+      dados[c.nome] = { id: el.value || null, texto };
+    } else if (c.tipo === 'checkbox') dados[c.nome] = el.checked;
     else if (c.tipo === 'number' || c.tipo === 'money') dados[c.nome] = el.value === '' ? null : Number(el.value);
     // Senha vai como foi digitada: espaço no início ou no fim é parte dela.
     else if (c.tipo === 'password') dados[c.nome] = el.value;
@@ -84,7 +224,9 @@ export function validar(form, campos) {
     if (!c.obrigatorio || c.tipo === 'separador') continue;
     const el = form.elements[c.nome];
     if (!el) continue;
-    const vazio = c.tipo === 'checkbox' ? !el.checked : !String(el.value).trim();
+    const vazio = c.tipo === 'checkbox' ? !el.checked
+      : c.tipo === 'autocompletar' ? !(form.querySelector(`#f_${c.nome}`)?.value || '').trim()
+        : !String(el.value).trim();
     if (vazio) {
       erros.push(`Informe ${c.rotulo.toLowerCase()}.`);
       el.closest('.campo')?.classList.add('campo--erro');

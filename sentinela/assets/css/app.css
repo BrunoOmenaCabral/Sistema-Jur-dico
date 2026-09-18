@@ -448,3 +448,18 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .barra-lote label { cursor: pointer; }
 .lista__item .selecao { display: flex; align-items: center; padding: 0 .2rem 0 .1rem; }
 .lista__item .selecao input { cursor: pointer; }
+
+/* ------------------------------------------------ campo com sugestões ---- */
+
+.sugestao { position: relative; }
+.sugestao__lista {
+  position: fixed; z-index: 120;
+  margin: 0; padding: .2rem; list-style: none; max-height: 15rem; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--linha); border-radius: var(--r);
+  box-shadow: var(--sombra-md);
+}
+.sugestao__item {
+  display: grid; gap: .1rem; padding: .35rem .5rem; border-radius: .35rem; cursor: pointer;
+}
+.sugestao__item--ativo, .sugestao__item:hover { background: var(--surface-3); }
+.campo__escolhido:empty { display: none; }

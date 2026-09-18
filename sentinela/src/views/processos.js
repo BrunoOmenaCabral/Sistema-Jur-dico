@@ -638,25 +638,30 @@ export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
 function abrirVinculo(processo, aoConcluir) {
   const outros = db.listar('processos')
     .filter((x) => x.id !== processo.id)
-    .map((x) => ({ valor: x.id, rotulo: `${fmtCNJ(x.numeroCNJ)} — ${x.classe || x.assunto || nomeCliente(x.clienteId)}` }));
+    .map((x) => ({
+      valor: x.id,
+      rotulo: fmtCNJ(x.numeroCNJ),
+      secundario: [x.classe || x.assunto, x.vara, nomeCliente(x.clienteId)].filter(Boolean).join(' · '),
+      termos: cnjDigitos(x.numeroCNJ),
+    }));
 
   modalFormulario({
     titulo: 'Vincular processo', largo: true,
     campos: [
       { nome: 'relacao', rotulo: 'O outro processo é', tipo: 'select', vazio: false, largura: 3,
         opcoes: RELACOES_PROCESSO.map((r) => ({ valor: r.id, rotulo: r.rotulo })) },
-      { nome: 'alvoId', rotulo: 'Processo cadastrado', tipo: 'select', opcoes: outros, largura: 3,
-        placeholder: '— informar pelo número —' },
-      { nome: 'numeroCNJ', rotulo: 'Número CNJ', tipo: 'text', largura: 2,
-        ajuda: 'Use quando o processo ainda não estiver cadastrado. O vínculo se completa sozinho depois.' },
+      { nome: 'alvo', rotulo: 'Processo', tipo: 'autocompletar', opcoes: outros, largura: 2,
+        obrigatorio: true, placeholder: 'Digite o número, o cliente ou a classe',
+        ajuda: 'O que já estiver cadastrado aparece enquanto se digita. Não aparecendo, '
+          + 'informe o número inteiro: o vínculo se completa quando ele for cadastrado.' },
       { nome: 'observacao', rotulo: 'Observação', tipo: 'text' },
     ],
     valores: { relacao: 'agravo' },
     rotuloSalvar: 'Vincular',
     aoSalvar: (d, { avisos }) => {
       const r = vincularProcessos(processo.id, {
-        alvoId: d.alvoId || null,
-        numeroCNJ: d.numeroCNJ,
+        alvoId: d.alvo.id,
+        numeroCNJ: d.alvo.texto,
         relacao: d.relacao,
         observacao: d.observacao,
       });
