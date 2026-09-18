@@ -532,6 +532,63 @@ teste('falha de comunicação não é lida como ausência de intimação', () =>
   assert.match(bloqueada.mensagem, /403|Brasil/);
 });
 
+// A janela consultada é o que decide se algo volta do diário: registra-se o que
+// foi pedido ao serviço em cada cenário.
+const marcarUltima = (valor) => db.salvarConfig({ integracoes: { ...db.config().integracoes,
+  publicacoes: { ...db.config().integracoes.publicacoes, ultimaConsulta: valor } } });
+const ultimaConsulta = () => db.config().integracoes.publicacoes.ultimaConsulta;
+const pedidos = [];
+const servicoVazio = async (url) => {
+  pedidos.push(new URL(url, 'http://local').searchParams);
+  return { ok: true, status: 200, json: async () => ({ count: 0, items: [] }) };
+};
+
+marcarUltima(hoje());
+globalThis.fetch = servicoVazio;
+const manual = await servicoPublicacoes.consultar({ dias: 30 });
+const janelaManual = pedidos.at(-1);
+
+marcarUltima('2026-09-10');
+const rotina = await servicoPublicacoes.consultar({ ref: '2026-09-17' });
+const janelaRotina = pedidos.at(-1);
+
+marcarUltima('2026-09-10');
+globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => ({}) });
+await servicoPublicacoes.consultar({ ref: '2026-09-17' });
+const marcaAposFalha = ultimaConsulta();
+
+globalThis.fetch = servicoVazio;
+await servicoPublicacoes.consultar({ ref: '2026-09-17' });
+const marcaAposSucesso = ultimaConsulta();
+
+const antesDaImportacao = ultimaConsulta();
+servicoPublicacoes.importar([], '2026-09-18');
+const marcaAposImportar = ultimaConsulta();
+globalThis.fetch = fetchAntes;
+marcarUltima(null);
+
+teste('a consulta manual vale pelo período pedido, não pela última busca', () => {
+  // Antes, consultada uma vez no dia, a janela virava [hoje, hoje] e nada mais voltava.
+  assert.equal(janelaManual.get('dataDisponibilizacaoFim'), hoje());
+  assert.equal(janelaManual.get('dataDisponibilizacaoInicio'), addDays(hoje(), -30));
+});
+teste('a rotina retoma da última consulta com sobreposição de dias', () => {
+  assert.equal(janelaRotina.get('dataDisponibilizacaoInicio'), '2026-09-07');
+  assert.equal(janelaRotina.get('dataDisponibilizacaoFim'), '2026-09-17');
+});
+teste('o diário sem comunicações no período é dito com todas as letras', () => {
+  assert.equal(manual.recebidas, 0);
+  assert.ok(!manual.erro);
+  assert.match(manual.mensagem, /sem comunica/i);
+});
+teste('a marca do dia não avança quando a consulta falha', () => {
+  assert.equal(marcaAposFalha, '2026-09-10');
+  assert.equal(marcaAposSucesso, '2026-09-17');
+});
+teste('importação manual não carimba a data da consulta ao diário', () => {
+  assert.equal(marcaAposImportar, antesDaImportacao);
+});
+
 console.log('\nArquivamento e exclusão de processo');
 
 const { dependenciasDoProcesso, arquivarProcesso, reativarProcesso, excluirProcesso } =

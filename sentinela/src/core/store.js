@@ -55,7 +55,7 @@ export function configuracoesPadrao() {
     },
     integracoes: {
       publicacoes: { ativo: false, provedor: '', chave: '', oabs: '',
-        dias: ['seg', 'qua', 'sex'], ultimaConsulta: null },
+        dias: ['seg', 'qua', 'sex'], ultimaConsulta: null, diasConsulta: 30 },
       ia: { ativo: false, provedor: 'heuristico', endpoint: '', chave: '', modelo: '' },
       whatsapp: { ativo: false, provedor: '', numero: '', token: '' },
       email: { ativo: false, remetente: '', servidor: '' },

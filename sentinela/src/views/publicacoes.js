@@ -15,7 +15,7 @@ import {
   arquivarPublicacoes, reabrirPublicacoes, marcarPublicacoesSemPrazo,
 } from '../core/dominio.js';
 import { TIPOS_PRAZO, tipoPrazo } from '../core/calculo-prazo.js';
-import { fmtCNJ, fmtData, hoje, addDays, cnjDigitos } from '../core/util.js';
+import { fmtCNJ, fmtData, hoje, cnjDigitos } from '../core/util.js';
 import { ir, recarregar } from '../ui/roteador.js';
 import { definirTitulo } from '../ui/casca.js';
 import { abrirFormularioProcesso } from './processos.js';
@@ -29,6 +29,9 @@ export function publicacoes({ params }) {
   let selecionadas = new Set();
 
   const cfg = db.config().integracoes.publicacoes;
+  // O período escolhido fica guardado: a tela é redesenhada a cada consulta e a
+  // escolha não pode voltar sozinha ao padrão.
+  const diasConsulta = Number(cfg.diasConsulta) || 30;
   const inscricoes = oabsMonitoradas();
   const fonte = cfg.ativo && cfg.provedor
     ? `Provedor contratado: ${cfg.provedor}`
@@ -38,6 +41,10 @@ export function publicacoes({ params }) {
 
   const tela = h(`<div>
     ${cabecalhoPagina('Publicações', `
+      <select class="btn" data-periodo title="Período da consulta">
+        ${[7, 15, 30, 60, 90].map((d) => `<option value="${d}"
+          ${d === diasConsulta ? 'selected' : ''}>últimos ${d} dias</option>`).join('')}
+      </select>
       <button class="btn btn--primario" data-acao="consultar">Consultar DJEN agora</button>
       <button class="btn" data-acao="revisar">Revisar vínculos</button>
       <button class="btn" data-acao="importar">Importar manualmente</button>`,
@@ -172,6 +179,11 @@ export function publicacoes({ params }) {
       r.total ? 'ok' : 'atencao');
     recarregar();
   });
+  delegar(tela, 'change', '[data-periodo]', (_e, el) => {
+    const conf = db.config().integracoes;
+    db.salvarConfig({ integracoes: { ...conf,
+      publicacoes: { ...conf.publicacoes, diasConsulta: Number(el.value) || 30 } } });
+  });
   delegar(tela, 'click', '[data-acao="importar"]', () => abrirImportacao(desenhar));
   delegar(tela, 'click', '[data-acao="consultar"]', async (_e, el) => {
     if (!inscricoes.length && !(cfg.ativo && cfg.provedor)) { abrirCadastroOAB(); return; }
@@ -179,9 +191,12 @@ export function publicacoes({ params }) {
     const rotulo = el.textContent;
     el.textContent = 'Consultando…';
     try {
-      // Na consulta manual vale a pena olhar mais para trás do que a rotina diária.
-      const r = await servicoPublicacoes.consultar({ de: cfg.ultimaConsulta || addDays(hoje(), -30) });
-      aviso(r.mensagem, r.importadas ? 'ok' : r.erro ? 'erro' : 'atencao');
+      // A consulta manual vale pelo período escolhido, contado de hoje para trás.
+      // Prendê-la à última consulta encolhia a janela para um único dia e, depois
+      // da primeira busca do dia, nada mais voltava.
+      const dias = Number(qs('[data-periodo]', tela)?.value) || diasConsulta;
+      const r = await servicoPublicacoes.consultar({ dias });
+      aviso(r.mensagem, r.erro ? 'erro' : r.recebidas ? 'ok' : 'atencao');
       recarregar();
     } finally {
       el.disabled = false;
@@ -372,7 +387,7 @@ function abrirCadastroOAB() {
     aoSalvar: async ({ numero, uf }) => {
       const inscricao = `OAB/${String(uf).toUpperCase()} ${String(numero).replace(/\D/g, '')}`;
       db.atualizar('usuarios', usuario.id, { oab: inscricao }, 'Inscrição na OAB registrada');
-      const r = await servicoPublicacoes.consultar({ de: addDays(hoje(), -30) });
+      const r = await servicoPublicacoes.consultar({ dias: 30 });
       aviso(r.mensagem, r.importadas ? 'ok' : r.erro ? 'erro' : 'atencao');
       recarregar();
     },

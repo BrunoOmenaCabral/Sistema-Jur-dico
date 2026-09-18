@@ -132,6 +132,10 @@ export function exportarAgendaICS(eventos, nome = 'agenda-sentinela.ics') {
 
 const DIAS_SEMANA_ID = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
 
+// Dias de sobreposição na consulta automática, para cobrir a comunicação que o
+// diário publica com disponibilização retroativa e o dia em que a consulta falhou.
+const RETROACAO = 3;
+
 /**
  * Inscrições na OAB acompanhadas pelo escritório.
  *
@@ -172,7 +176,7 @@ export const publicacoes = {
    *
    * @returns {Promise<{importadas:number, ignoradas:number, mensagem:string}>}
    */
-  async consultar({ ref = hoje(), lote = null, de = null, ate = null } = {}) {
+  async consultar({ ref = hoje(), lote = null, de = null, ate = null, dias = null } = {}) {
     const cfg = db.config().integracoes.publicacoes || {};
     if (lote) return this.importar(lote, ref);
 
@@ -188,13 +192,18 @@ export const publicacoes = {
           + 'inscrições do escritório em Configurações, para que a consulta ao DJEN seja possível.' };
     }
 
-    // Retoma de onde parou, com uma semana de folga na primeira vez.
-    const inicio = de || cfg.ultimaConsulta || addDays(ref, -7);
+    // Retoma de onde parou, mas sempre com alguns dias de sobreposição: o DJEN
+    // publica comunicação cuja disponibilização é anterior ao dia da consulta e,
+    // se um dia falhar, a sobreposição impede que o período vire buraco.
+    const inicio = de
+      || (dias ? addDays(ref, -Math.abs(dias)) : null)
+      || (cfg.ultimaConsulta ? addDays(cfg.ultimaConsulta, -RETROACAO) : addDays(ref, -7));
+    const fim = ate || ref;
     const brutas = [];
     const falhas = [];
 
     for (const { numero, uf } of inscricoes) {
-      const r = await consultarDJEN({ numeroOab: numero, ufOab: uf, de: inicio, ate: ate || ref });
+      const r = await consultarDJEN({ numeroOab: numero, ufOab: uf, de: inicio, ate: fim });
       if (!r.ok) { falhas.push(`OAB ${numero}/${uf}: ${r.motivo}`); continue; }
       brutas.push(...r.comunicacoes.map(comunicacaoComoPublicacao));
     }
@@ -206,10 +215,25 @@ export const publicacoes = {
 
     const r = this.importar(brutas, ref);
     const rotulo = inscricoes.map((i) => `${i.numero}/${i.uf}`).join(', ');
-    return { ...r, falhas,
-      mensagem: `${r.importadas} intimação(ões) nova(s) desde ${fmtData(inicio)} para ${rotulo}; `
-        + `${r.ignoradas} já existente(s).`
-        + (falhas.length ? ` ${falhas.length} inscrição(ões) sem resposta.` : '') };
+    const periodo = `${fmtData(inicio)} a ${fmtData(fim)}`;
+    const pendura = falhas.length ? ` ${falhas.length} inscrição(ões) sem resposta.` : '';
+
+    // A marca do dia só avança quando todas as inscrições responderam. Avançar
+    // após falha deixaria o período sem nova tentativa — e intimação perdida.
+    if (!falhas.length) this.marcarConsulta(ref);
+
+    return { ...r, falhas, recebidas: brutas.length, inicio, fim,
+      mensagem: brutas.length
+        ? `${brutas.length} comunicação(ões) de ${periodo} para ${rotulo}: `
+          + `${r.importadas} nova(s), ${r.ignoradas} já existente(s).${pendura}`
+        : `O DJEN respondeu sem comunicações de ${periodo} para ${rotulo}.${pendura}` };
+  },
+
+  /** Registra o dia da última consulta bem-sucedida ao diário. */
+  marcarConsulta(ref = hoje()) {
+    const cfg = db.config().integracoes;
+    db.salvarConfig({ integracoes: { ...cfg,
+      publicacoes: { ...cfg.publicacoes, ultimaConsulta: ref } } });
   },
 
   /** Recebe publicações brutas, associa ao processo e monta a fila de conferência. */
@@ -239,10 +263,6 @@ export const publicacoes = {
       importadas += 1;
     }
 
-    db.salvarConfig({
-      integracoes: { ...db.config().integracoes,
-        publicacoes: { ...db.config().integracoes.publicacoes, ultimaConsulta: ref } },
-    });
     return { importadas, ignoradas,
       mensagem: `${importadas} publicação(ões) importada(s); ${ignoradas} já existente(s).` };
   },
