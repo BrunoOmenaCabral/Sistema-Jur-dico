@@ -6,7 +6,7 @@
 // provedor não estiver configurado, o adaptador local resolve o essencial:
 // abre o WhatsApp Web, o cliente de e-mail ou gera o arquivo para download.
 
-import { db } from './store.js';
+import { db, DIAS_ROTINA } from './store.js';
 import { fmtCNJ, fmtData, iso, hoje, addDays, diffDias, uid, norm, cnjDigitos } from './util.js';
 import { processoDe, clienteDe, nomeCliente } from './dominio.js';
 import { interpretarPublicacao, extrairNumerosCNJ } from './ia.js';
@@ -159,11 +159,16 @@ export function oabsMonitoradas() {
 }
 
 export const publicacoes = {
-  /** A rotina padrão de consulta ocorre às segundas, quartas e sextas. */
+  /**
+   * A consulta ao diário é devida todo dia, uma vez por dia. O escritório pode
+   * restringir os dias em Configurações, mas o padrão não deixa a intimação
+   * esperar: prazo corre em dia útil, e a publicação de terça conta de quarta.
+   */
   devidaHoje(ref = hoje()) {
     const cfg = db.config().integracoes.publicacoes;
     const dia = DIAS_SEMANA_ID[new Date(`${ref}T12:00:00`).getDay()];
-    return (cfg?.dias || ['seg', 'qua', 'sex']).includes(dia) && cfg?.ultimaConsulta !== ref;
+    return (cfg?.dias?.length ? cfg.dias : DIAS_ROTINA).includes(dia)
+      && cfg?.ultimaConsulta !== ref;
   },
 
   /**

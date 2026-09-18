@@ -4,11 +4,15 @@
 import { h, qs, esc, delegar, aviso, confirmar } from '../ui/ui.js';
 import { modalFormulario } from '../ui/formulario.js';
 import { cabecalhoPagina } from '../ui/componentes.js';
-import { db, COLECOES, modoAtual, sincronizarCompleto } from '../core/store.js';
+import { db, COLECOES, modoAtual, sincronizarCompleto, DIAS_ROTINA } from '../core/store.js';
 import { pode } from '../core/auth.js';
 import { fmtData, fmtDataHora, hoje } from '../core/util.js';
 import { baixarArquivo } from '../core/integracoes.js';
 import { definirTitulo } from '../ui/casca.js';
+
+// Ordem da semana como se lê no calendário forense.
+const ROTULO_DIAS = [['seg', 'seg'], ['ter', 'ter'], ['qua', 'qua'], ['qui', 'qui'],
+  ['sex', 'sex'], ['sab', 'sáb'], ['dom', 'dom']];
 
 export function configuracoes() {
   definirTitulo('Configurações');
@@ -135,7 +139,15 @@ export function configuracoes() {
           <input data-int-campo="publicacoes:oabs" value="${esc(i.publicacoes?.oabs || '')}"
             placeholder="12345/PE, 67890/SP">
           <span class="campo__ajuda">Separadas por vírgula. Em branco, valem as inscrições
-            cadastradas nos usuários do escritório.</span></div>` : ''}
+            cadastradas nos usuários do escritório.</span></div>
+        <div class="campo"><label>Dias da consulta automática</label>
+          <div class="linha" style="flex-wrap:wrap;gap:.6rem">
+            ${ROTULO_DIAS.map(([id, rotulo]) => `<label class="linha" style="gap:.3rem">
+              <input type="checkbox" data-int-dia="${id}"
+                ${(i.publicacoes?.dias || []).includes(id) ? 'checked' : ''}>${esc(rotulo)}</label>`).join('')}
+          </div>
+          <span class="campo__ajuda">A consulta ocorre uma vez por dia, ao abrir o sistema.
+            Desmarcando todos, volta a valer a consulta diária.</span></div>` : ''}
       </div></section>`).join('')}
       </div>
       <div class="linha" style="margin-top:.7rem">
@@ -263,6 +275,13 @@ export function configuracoes() {
       const [chave, campo] = el.dataset.intCampo.split(':');
       integracoes[chave] = { ...integracoes[chave], [campo]: el.value };
     });
+    const marcados = [...tela.querySelectorAll('[data-int-dia]')]
+      .filter((el) => el.checked).map((el) => el.dataset.intDia);
+    if (tela.querySelector('[data-int-dia]')) {
+      // Sem nenhum dia marcado a rotina nunca correria: vale o padrão diário.
+      integracoes.publicacoes = { ...integracoes.publicacoes,
+        dias: marcados.length ? marcados : [...DIAS_ROTINA] };
+    }
     db.salvarConfig({ integracoes }); aviso('Integrações salvas.', 'ok');
   });
 

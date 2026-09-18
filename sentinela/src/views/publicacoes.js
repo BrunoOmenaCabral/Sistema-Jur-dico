@@ -21,6 +21,9 @@ import { definirTitulo } from '../ui/casca.js';
 import { abrirFormularioProcesso } from './processos.js';
 import { usuarioAtual } from '../core/auth.js';
 
+/** "diária" quando a rotina cobre a semana inteira; os dias, quando não cobre. */
+const rotuloRotina = (dias) => (!dias?.length || dias.length >= 7 ? 'diária' : dias.join(' · '));
+
 export function publicacoes({ params }) {
   if (params[0]) return fichaPublicacao(params[0]);
   definirTitulo('Publicações');
@@ -48,7 +51,7 @@ export function publicacoes({ params }) {
       <button class="btn btn--primario" data-acao="consultar">Consultar DJEN agora</button>
       <button class="btn" data-acao="revisar">Revisar vínculos</button>
       <button class="btn" data-acao="importar">Importar manualmente</button>`,
-    `${fonte} · rotina ${(cfg.dias || []).join(' · ')} · última consulta `
+    `${fonte} · rotina ${rotuloRotina(cfg.dias)} · última consulta `
     + `${cfg.ultimaConsulta ? fmtData(cfg.ultimaConsulta) : 'nunca'}`)}
     <div class="abas">
       <div class="aba ativa" data-aba="pendente">Aguardando conferência</div>

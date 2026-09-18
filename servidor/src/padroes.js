@@ -14,7 +14,11 @@ export function configuracoesPadrao() {
       relatorioMensal: { ativo: false, dia: 1 },
     },
     integracoes: {
-      publicacoes: { ativo: false, provedor: '', chave: '', dias: ['seg', 'qua', 'sex'], ultimaConsulta: null },
+      // Consulta ao diário todo dia: intimação publicada numa terça não pode
+      // esperar a quarta para ser vista.
+      publicacoes: { ativo: false, provedor: '', chave: '', oabs: '',
+        dias: ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'],
+        ultimaConsulta: null, diasConsulta: 30 },
       ia: { ativo: false, provedor: 'heuristico', endpoint: '', chave: '', modelo: '' },
       whatsapp: { ativo: false, provedor: '', numero: '', token: '' },
       email: { ativo: false, remetente: '', servidor: '' },

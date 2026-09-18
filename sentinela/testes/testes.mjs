@@ -589,6 +589,42 @@ teste('importação manual não carimba a data da consulta ao diário', () => {
   assert.equal(marcaAposImportar, antesDaImportacao);
 });
 
+/* ------------------------------ rotina diária do diário ------------------ */
+
+const { normalizarConfiguracoes, DIAS_ROTINA } = await import('../src/core/store.js');
+
+teste('a consulta ao diário é devida em qualquer dia da semana', () => {
+  marcarUltima(null);
+  // Terça, quinta, sábado e domingo: dias fora da rotina antiga.
+  for (const dia of ['2026-09-15', '2026-09-17', '2026-09-19', '2026-09-20']) {
+    assert.equal(servicoPublicacoes.devidaHoje(dia), true, dia);
+  }
+});
+teste('a rotina não repete a consulta já feita no dia', () => {
+  marcarUltima('2026-09-15');
+  assert.equal(servicoPublicacoes.devidaHoje('2026-09-15'), false);
+  assert.equal(servicoPublicacoes.devidaHoje('2026-09-16'), true);
+  marcarUltima(null);
+});
+teste('base criada com a rotina antiga passa a consultar todo dia', () => {
+  const cfg = normalizarConfiguracoes({ integracoes: { publicacoes: {
+    ativo: false, provedor: '', chave: '', oabs: '111/PE',
+    dias: ['seg', 'qua', 'sex'], ultimaConsulta: '2026-09-10' } } });
+  assert.deepEqual(cfg.integracoes.publicacoes.dias, DIAS_ROTINA);
+  // A migração não pode levar consigo o que o escritório já havia configurado.
+  assert.equal(cfg.integracoes.publicacoes.oabs, '111/PE');
+  assert.equal(cfg.integracoes.publicacoes.ultimaConsulta, '2026-09-10');
+});
+teste('dias escolhidos pelo escritório são preservados', () => {
+  const cfg = normalizarConfiguracoes({ integracoes: { publicacoes: { dias: ['ter', 'qui'] } } });
+  assert.deepEqual(cfg.integracoes.publicacoes.dias, ['ter', 'qui']);
+});
+teste('integração gravada antes recebe os campos novos', () => {
+  const cfg = normalizarConfiguracoes({ integracoes: { publicacoes: { oabs: '222/SP' } } });
+  assert.equal(cfg.integracoes.publicacoes.diasConsulta, 30);
+  assert.ok(cfg.integracoes.tribunais);
+});
+
 console.log('\nArquivamento e exclusão de processo');
 
 const { dependenciasDoProcesso, arquivarProcesso, reativarProcesso, excluirProcesso } =

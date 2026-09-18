@@ -33,6 +33,36 @@ const estadoInicial = () => ({
   ...Object.fromEntries(COLECOES.map((c) => [c, []])),
 });
 
+// Dias em que a consulta ao diário é devida. O padrão é diário: intimação
+// publicada numa terça não pode esperar a quarta para ser vista.
+export const DIAS_ROTINA = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'];
+
+// Rotina das versões anteriores, em três dias da semana.
+const ROTINA_ANTIGA = ['seg', 'qua', 'sex'];
+
+/**
+ * Ajusta a configuração lida da base ao formato corrente.
+ *
+ * A cópia rasa do padrão deixaria sem campos novos a integração já gravada, e
+ * a base criada antes da mudança manteria a consulta em três dias da semana —
+ * periodicidade que nunca esteve ao alcance do usuário.
+ */
+export function normalizarConfiguracoes(bruto) {
+  const padrao = configuracoesPadrao();
+  const cfg = { ...padrao, ...(bruto || {}) };
+
+  cfg.integracoes = Object.fromEntries(Object.entries(padrao.integracoes)
+    .map(([chave, valor]) => [chave, { ...valor, ...(bruto?.integracoes?.[chave] || {}) }]));
+
+  const pub = cfg.integracoes.publicacoes;
+  const rotinaAntiga = Array.isArray(pub.dias) && pub.dias.length === ROTINA_ANTIGA.length
+    && ROTINA_ANTIGA.every((d) => pub.dias.includes(d));
+  if (rotinaAntiga || !Array.isArray(pub.dias) || !pub.dias.length) {
+    cfg.integracoes.publicacoes = { ...pub, dias: [...DIAS_ROTINA] };
+  }
+  return cfg;
+}
+
 export function configuracoesPadrao() {
   return {
     escritorio: { nome: 'Escritório de Advocacia', oab: '', email: '', telefone: '', whatsapp: '' },
@@ -55,7 +85,7 @@ export function configuracoesPadrao() {
     },
     integracoes: {
       publicacoes: { ativo: false, provedor: '', chave: '', oabs: '',
-        dias: ['seg', 'qua', 'sex'], ultimaConsulta: null, diasConsulta: 30 },
+        dias: [...DIAS_ROTINA], ultimaConsulta: null, diasConsulta: 30 },
       ia: { ativo: false, provedor: 'heuristico', endpoint: '', chave: '', modelo: '' },
       whatsapp: { ativo: false, provedor: '', numero: '', token: '' },
       email: { ativo: false, remetente: '', servidor: '' },
@@ -82,7 +112,7 @@ function carregar() {
   try {
     const bruto = localStorage.getItem(CHAVE);
     estado = bruto ? { ...estadoInicial(), ...JSON.parse(bruto) } : estadoInicial();
-    estado.configuracoes = { ...configuracoesPadrao(), ...(estado.configuracoes || {}) };
+    estado.configuracoes = normalizarConfiguracoes(estado.configuracoes);
   } catch (e) {
     console.error('Falha ao ler os dados locais. Iniciando base vazia.', e);
     estado = estadoInicial();
@@ -233,7 +263,7 @@ export function aplicarEstadoDoServidor(payload) {
   estado.auditoria = payload.auditoria || [];
   try { estado.notificacoes = JSON.parse(localStorage.getItem(chaveNotificacoes()) || '[]'); }
   catch { estado.notificacoes = []; }
-  estado.configuracoes = { ...configuracoesPadrao(), ...(payload.configuracoes || {}) };
+  estado.configuracoes = normalizarConfiguracoes(payload.configuracoes);
   ultimaSincronizacao = payload.servidor?.agora || new Date().toISOString();
   salvar();
 }
