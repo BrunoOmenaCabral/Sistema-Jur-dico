@@ -1141,6 +1141,83 @@ teste('havendo recorte, ele é informado em vez de escondido', () => {
   assert.equal(v.omitidos, 29);
 });
 
+/* ---------------------------- vínculos entre processos -------------------- */
+
+const { vincularProcessos, desvincularProcessos, vinculosDoProcesso,
+  RELACOES_PROCESSO, rotuloRelacao } = await import('../src/core/dominio.js');
+
+const originario = db.inserir('processos', {
+  numeroCNJ: cnjValido(901), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+});
+const agravo = db.inserir('processos', {
+  numeroCNJ: cnjValido(902), clienteId: processo.clienteId, status: 'ativo', tribunal: 'TJPE',
+});
+
+teste('o vínculo é gravado nos dois processos, com a relação invertida', () => {
+  const r = vincularProcessos(originario.id, { alvoId: agravo.id, relacao: 'agravo' });
+  assert.equal(r.ok, true);
+
+  const daOrigem = vinculosDoProcesso(originario.id);
+  assert.equal(daOrigem.length, 1);
+  assert.equal(daOrigem[0].relacao, 'agravo');
+  assert.equal(daOrigem[0].processoId, agravo.id);
+
+  const doAgravo = vinculosDoProcesso(agravo.id);
+  assert.equal(doAgravo.length, 1);
+  assert.equal(doAgravo[0].relacao, 'origem');
+  assert.equal(doAgravo[0].processoId, originario.id);
+});
+teste('o mesmo par não se vincula duas vezes', () => {
+  const r = vincularProcessos(originario.id, { alvoId: agravo.id, relacao: 'conexo' });
+  assert.equal(r.ok, false);
+  assert.match(r.motivo, /já estão vinculados/);
+});
+teste('processo não se vincula a si mesmo', () => {
+  const r = vincularProcessos(originario.id, { alvoId: originario.id, relacao: 'conexo' });
+  assert.equal(r.ok, false);
+  assert.match(r.motivo, /a si mesmo/);
+});
+teste('número inválido é recusado antes de gravar', () => {
+  const r = vincularProcessos(originario.id, { numeroCNJ: '123', relacao: 'recurso' });
+  assert.equal(r.ok, false);
+  assert.match(r.motivo, /20 d[íi]gitos/);
+});
+teste('desfazer o vínculo limpa os dois lados', () => {
+  assert.equal(desvincularProcessos(originario.id, agravo.numeroCNJ).ok, true);
+  assert.equal(vinculosDoProcesso(originario.id).length, 0);
+  assert.equal(vinculosDoProcesso(agravo.id).length, 0);
+});
+teste('vínculo com processo ainda não cadastrado guarda o número', () => {
+  const futuro = cnjValido(903);
+  const r = vincularProcessos(originario.id, { numeroCNJ: futuro, relacao: 'agravo' });
+  assert.equal(r.ok, true);
+  const v = vinculosDoProcesso(originario.id);
+  assert.equal(v.length, 1);
+  assert.equal(v[0].processoId, null);
+  assert.equal(v[0].processo, null);
+});
+teste('cadastrado depois, o processo passa a ser alcançável dos dois lados', () => {
+  const novo = db.inserir('processos', {
+    numeroCNJ: cnjValido(903), clienteId: processo.clienteId, status: 'ativo',
+  });
+  const v = vinculosDoProcesso(originario.id);
+  assert.equal(v[0].processoId, novo.id);
+  assert.equal(v[0].processo.numeroCNJ, novo.numeroCNJ);
+
+  // A recíproca é criada no processo novo, que não existia quando o vínculo nasceu.
+  const inverso = vinculosDoProcesso(novo.id);
+  assert.equal(inverso.length, 1);
+  assert.equal(inverso[0].relacao, 'origem');
+  assert.equal(inverso[0].processoId, originario.id);
+});
+teste('cada relação tem recíproca declarada e rótulo legível', () => {
+  for (const r of RELACOES_PROCESSO) {
+    assert.ok(RELACOES_PROCESSO.some((x) => x.id === r.inverso), `${r.id} sem recíproca`);
+    assert.ok(rotuloRelacao(r.id).length > 3);
+  }
+  assert.equal(rotuloRelacao('inexistente'), 'Conexo');
+});
+
 console.log('\nCabeçalho das fichas');
 
 const { cabecalhoPagina } = await import('../src/ui/componentes.js');

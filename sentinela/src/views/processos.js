@@ -11,6 +11,7 @@ import {
   processoPorNumero, linhaDoTempo, nomeCliente, nomeUsuario, enriquecerPrazo,
   FASES_PROCESSO, STATUS_PROCESSO, situacaoPrazo,
   dependenciasDoProcesso, arquivarProcesso, reativarProcesso, excluirProcesso, revisarVinculos,
+  vincularProcessos, desvincularProcessos, vinculosDoProcesso, RELACOES_PROCESSO,
 } from '../core/dominio.js';
 import { fmtCNJ, validarCNJ, cnjDigitos, fmtData, fmtMoeda, norm, hoje } from '../core/util.js';
 import { ir, recarregar } from '../ui/roteador.js';
@@ -171,6 +172,14 @@ export function fichaProcesso(id) {
       </div></section>
     </div>
 
+    <section class="cartao" style="margin-bottom:.8rem"><div class="cartao__corpo">
+      <div class="linha linha--entre">
+        <h3>Processos vinculados</h3>
+        <button class="btn btn--pequeno" data-acao="vincular">Vincular processo</button>
+      </div>
+      <div id="vinculos" style="margin-top:.5rem"></div>
+    </div></section>
+
     <div class="abas">
       <div class="aba ativa" data-aba="timeline">Linha do tempo</div>
       <div class="aba" data-aba="prazos">Prazos (${prazos.length})</div>
@@ -236,11 +245,66 @@ export function fichaProcesso(id) {
   const mostrar = (aba) => { qs('#painel', tela).innerHTML = paineis[aba](); };
   mostrar('timeline');
 
+  /**
+   * Vínculos do processo. O que já está cadastrado abre com um clique; o que
+   * ainda não está aparece pelo número, com o cadastro à mão.
+   */
+  const desenharVinculos = () => {
+    const lista = vinculosDoProcesso(id);
+    qs('#vinculos', tela).innerHTML = lista.length ? `<ul class="lista">
+      ${lista.map((v) => `<li class="lista__item linha linha--entre"
+        ${v.processoId ? `data-rota="#/processos/${esc(v.processoId)}" style="cursor:pointer"` : ''}>
+        <div>
+          <div class="negrito">${esc(fmtCNJ(v.numeroCNJ))}
+            <span class="selo selo--neutro">${esc(v.rotulo)}</span>
+            ${v.processo
+    ? `<span class="selo selo--${v.processo.status === 'ativo' ? 'ok' : 'neutro'}">${esc(v.processo.status)}</span>`
+    : '<span class="selo selo--proximo">não cadastrado</span>'}</div>
+          <div class="mini mudo">${v.processo
+    ? esc([v.processo.classe, v.processo.vara, v.processo.tribunal].filter(Boolean).join(' · ') || '—')
+    : 'Cadastre o processo para acompanhar prazos e movimentações.'}
+            ${v.observacao ? ` · ${esc(v.observacao)}` : ''}</div>
+        </div>
+        <span class="linha">
+          ${v.processoId ? '' : `<button class="btn btn--pequeno" data-cadastrar-vinculo="${esc(v.numeroCNJ)}">Cadastrar</button>`}
+          <button class="btn btn--pequeno btn--perigo" data-desvincular="${esc(v.numeroCNJ)}">Desfazer</button>
+        </span>
+      </li>`).join('')}</ul>`
+      : `<div class="mini mudo">Nenhum processo vinculado. Use o botão acima para ligar este
+         processo ao agravo, ao recurso, ao cumprimento de sentença ou ao incidente.</div>`;
+  };
+  desenharVinculos();
+
   delegar(tela, 'click', '.aba[data-aba]', (_e, el) => {
     tela.querySelectorAll('.aba').forEach((a) => a.classList.toggle('ativa', a === el));
     mostrar(el.dataset.aba);
   });
-  delegar(tela, 'click', '[data-rota]', (_e, el) => el.dataset.rota && ir(el.dataset.rota));
+  delegar(tela, 'click', '[data-rota]', (ev, el) => {
+    // Botão dentro do item não navega: desfazer e cadastrar têm ação própria.
+    if (ev.target.closest('button')) return;
+    if (el.dataset.rota) ir(el.dataset.rota);
+  });
+  delegar(tela, 'click', '[data-acao="vincular"]', () => abrirVinculo(p, desenharVinculos));
+  delegar(tela, 'click', '[data-desvincular]', async (_e, el) => {
+    const numero = el.dataset.desvincular;
+    if (!await confirmar({ titulo: 'Desfazer vínculo',
+      mensagem: `Desfazer o vínculo com ${fmtCNJ(numero)}? Os dois processos permanecem cadastrados.` })) return;
+    desvincularProcessos(id, numero);
+    desenharVinculos();
+    aviso('Vínculo desfeito.', 'ok');
+  });
+  delegar(tela, 'click', '[data-cadastrar-vinculo]', (_e, el) => {
+    // Cliente e responsável do processo de origem servem de partida: agravo e
+    // recurso são do mesmo litígio e costumam ficar com o mesmo advogado.
+    abrirFormularioProcesso({
+      numeroCNJ: el.dataset.cadastrarVinculo,
+      clienteId: p.clienteId,
+      responsavelId: p.responsavelId,
+      tribunal: p.tribunal,
+      comarca: p.comarca,
+      uf: p.uf,
+    }, () => { desenharVinculos(); aviso('Processo cadastrado e vínculo completo.', 'ok'); });
+  });
   delegar(tela, 'click', '[data-acao="prazo"]', () => abrirFormularioPrazo({ processoId: id }, () => recarregar()));
   delegar(tela, 'click', '[data-acao="tarefa"]', () => abrirFormularioTarefa({ processoId: id, clienteId: p.clienteId }, () => recarregar()));
   delegar(tela, 'click', '[data-acao="audiencia"]', () => abrirFormularioAudiencia({ processoId: id, clienteId: p.clienteId }, () => recarregar()));
@@ -562,4 +626,48 @@ export function abrirAtualizacaoPeloTribunal(processo, aoConcluir) {
     ],
   });
   return ref;
+}
+
+/**
+ * Vínculo com outro processo do mesmo litígio.
+ *
+ * O alvo pode ser escolhido entre os cadastrados ou informado pelo número. O
+ * agravo de instrumento costuma ser cadastrado depois, e o vínculo lançado
+ * antes não se perde: ele se completa quando o processo entra na base.
+ */
+function abrirVinculo(processo, aoConcluir) {
+  const outros = db.listar('processos')
+    .filter((x) => x.id !== processo.id)
+    .map((x) => ({ valor: x.id, rotulo: `${fmtCNJ(x.numeroCNJ)} — ${x.classe || x.assunto || nomeCliente(x.clienteId)}` }));
+
+  modalFormulario({
+    titulo: 'Vincular processo', largo: true,
+    campos: [
+      { nome: 'relacao', rotulo: 'O outro processo é', tipo: 'select', vazio: false, largura: 3,
+        opcoes: RELACOES_PROCESSO.map((r) => ({ valor: r.id, rotulo: r.rotulo })) },
+      { nome: 'alvoId', rotulo: 'Processo cadastrado', tipo: 'select', opcoes: outros, largura: 3,
+        placeholder: '— informar pelo número —' },
+      { nome: 'numeroCNJ', rotulo: 'Número CNJ', tipo: 'text', largura: 2,
+        ajuda: 'Use quando o processo ainda não estiver cadastrado. O vínculo se completa sozinho depois.' },
+      { nome: 'observacao', rotulo: 'Observação', tipo: 'text' },
+    ],
+    valores: { relacao: 'agravo' },
+    rotuloSalvar: 'Vincular',
+    aoSalvar: (d, { avisos }) => {
+      const r = vincularProcessos(processo.id, {
+        alvoId: d.alvoId || null,
+        numeroCNJ: d.numeroCNJ,
+        relacao: d.relacao,
+        observacao: d.observacao,
+      });
+      if (!r.ok) {
+        avisos.innerHTML = `<div class="aviso aviso--alerta">${esc(r.motivo)}</div>`;
+        return false;
+      }
+      aviso(r.alvo ? 'Processos vinculados.'
+        : 'Vínculo registrado. Ele se completa quando o processo for cadastrado.', 'ok');
+      aoConcluir?.();
+      return true;
+    },
+  });
 }

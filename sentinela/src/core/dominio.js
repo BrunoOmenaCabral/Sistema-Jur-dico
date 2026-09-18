@@ -806,3 +806,132 @@ export function relatorioGerencial({ de, ate } = {}) {
     tarefasPendentes: db.listar('tarefas').filter((t) => abertos.includes(t.status)).length,
   };
 }
+
+/* ------------------------------------------- vínculos entre processos ----- */
+
+/**
+ * Relações entre processos do mesmo litígio.
+ *
+ * Cada relação descreve o que o outro processo é em face deste, e traz a sua
+ * recíproca: registrado o agravo de instrumento a partir do processo de origem,
+ * o agravo passa a apontar a origem sem que seja preciso lançá-lo duas vezes.
+ */
+export const RELACOES_PROCESSO = [
+  { id: 'agravo', rotulo: 'Agravo de instrumento', inverso: 'origem' },
+  { id: 'recurso', rotulo: 'Recurso (apelação, especial, extraordinário)', inverso: 'origem' },
+  { id: 'cumprimento', rotulo: 'Cumprimento de sentença ou execução', inverso: 'conhecimento' },
+  { id: 'incidente', rotulo: 'Incidente (impugnação, embargos, exceção)', inverso: 'principal' },
+  { id: 'origem', rotulo: 'Processo de origem', inverso: 'derivado' },
+  { id: 'conhecimento', rotulo: 'Processo de conhecimento', inverso: 'cumprimento' },
+  { id: 'principal', rotulo: 'Processo principal', inverso: 'incidente' },
+  { id: 'derivado', rotulo: 'Processo derivado', inverso: 'origem' },
+  { id: 'conexo', rotulo: 'Conexo', inverso: 'conexo' },
+  { id: 'apenso', rotulo: 'Apenso', inverso: 'apenso' },
+];
+
+// Relação desconhecida cai em "conexo", que é simétrica e nada afirma além do
+// vínculo em si.
+const regraRelacao = (id) => RELACOES_PROCESSO.find((r) => r.id === id)
+  || RELACOES_PROCESSO.find((r) => r.id === 'conexo');
+export const rotuloRelacao = (id) => regraRelacao(id).rotulo;
+
+const gravarVinculos = (processo, vinculos, detalhe) =>
+  db.atualizar('processos', processo.id, { vinculos }, detalhe);
+
+/**
+ * Vincula dois processos, guardando a relação nos dois.
+ *
+ * O alvo pode não estar cadastrado: guarda-se o número, e o vínculo se completa
+ * sozinho quando o processo entrar na base — é o caso comum do agravo que o
+ * escritório cadastra depois.
+ */
+export function vincularProcessos(processoId, { alvoId = null, numeroCNJ = '',
+  relacao = 'conexo', observacao = '' } = {}) {
+  const origem = processoDe(processoId);
+  if (!origem) return { ok: false, motivo: 'Processo não encontrado.' };
+
+  const alvo = alvoId ? processoDe(alvoId) : processoPorNumero(numeroCNJ);
+  const numero = cnjDigitos(alvo?.numeroCNJ || numeroCNJ);
+  if (numero.length !== 20) {
+    return { ok: false, motivo: 'Informe o número CNJ do processo, com 20 dígitos.' };
+  }
+  if (numero === cnjDigitos(origem.numeroCNJ)) {
+    return { ok: false, motivo: 'Um processo não se vincula a si mesmo.' };
+  }
+  if ((origem.vinculos || []).some((v) => cnjDigitos(v.numeroCNJ) === numero)) {
+    return { ok: false, motivo: 'Esses processos já estão vinculados.' };
+  }
+
+  const regra = regraRelacao(relacao);
+  gravarVinculos(origem, [...(origem.vinculos || []), {
+    processoId: alvo?.id || null, numeroCNJ: numero, relacao: regra.id, observacao,
+  }], `Vinculado a ${fmtCNJ(numero)} como ${regra.rotulo.toLowerCase()}`);
+
+  if (alvo) {
+    gravarVinculos(alvo, [...(alvo.vinculos || []), {
+      processoId: origem.id,
+      numeroCNJ: cnjDigitos(origem.numeroCNJ),
+      relacao: regra.inverso,
+      observacao,
+    }], `Vinculado a ${fmtCNJ(origem.numeroCNJ)} como ${rotuloRelacao(regra.inverso).toLowerCase()}`);
+  }
+  return { ok: true, alvo, relacao: regra.id };
+}
+
+/** Desfaz o vínculo dos dois lados: vínculo que sobra de um lado só engana. */
+export function desvincularProcessos(processoId, numeroCNJ) {
+  const origem = processoDe(processoId);
+  if (!origem) return { ok: false, motivo: 'Processo não encontrado.' };
+  const numero = cnjDigitos(numeroCNJ);
+
+  gravarVinculos(origem, (origem.vinculos || []).filter((v) => cnjDigitos(v.numeroCNJ) !== numero),
+    `Vínculo com ${fmtCNJ(numero)} desfeito`);
+
+  const alvo = processoPorNumero(numero);
+  if (alvo) {
+    gravarVinculos(alvo, (alvo.vinculos || [])
+      .filter((v) => cnjDigitos(v.numeroCNJ) !== cnjDigitos(origem.numeroCNJ)),
+    `Vínculo com ${fmtCNJ(origem.numeroCNJ)} desfeito`);
+  }
+  return { ok: true };
+}
+
+/**
+ * Vínculos do processo, já resolvidos.
+ *
+ * A leitura aproveita para acertar o que mudou desde o registro: processo
+ * cadastrado depois passa a ser alcançável, e processo excluído volta a ser
+ * apenas um número. O acerto é gravado, inclusive a recíproca que faltava.
+ */
+export function vinculosDoProcesso(processoId) {
+  const processo = processoDe(processoId);
+  if (!processo?.vinculos?.length) return [];
+
+  let mudou = false;
+  const resolvidos = processo.vinculos.map((v) => {
+    const alvo = (v.processoId && processoDe(v.processoId)) || processoPorNumero(v.numeroCNJ);
+    const idAtual = alvo?.id || null;
+    if (idAtual !== (v.processoId || null)) mudou = true;
+    return { ...v, processoId: idAtual, processo: alvo || null, rotulo: rotuloRelacao(v.relacao) };
+  });
+
+  if (mudou) {
+    gravarVinculos(processo, resolvidos.map(({ processo: _p, rotulo: _r, ...v }) => v),
+      'Vínculos revistos');
+
+    // Processo cadastrado depois não conhece o vínculo criado antes dele.
+    for (const v of resolvidos) {
+      if (!v.processo) continue;
+      const jaTem = (v.processo.vinculos || [])
+        .some((x) => cnjDigitos(x.numeroCNJ) === cnjDigitos(processo.numeroCNJ));
+      if (jaTem) continue;
+      gravarVinculos(v.processo, [...(v.processo.vinculos || []), {
+        processoId: processo.id,
+        numeroCNJ: cnjDigitos(processo.numeroCNJ),
+        relacao: regraRelacao(v.relacao).inverso,
+        observacao: v.observacao || '',
+      }], `Vinculado a ${fmtCNJ(processo.numeroCNJ)}`);
+    }
+  }
+  return resolvidos;
+}
