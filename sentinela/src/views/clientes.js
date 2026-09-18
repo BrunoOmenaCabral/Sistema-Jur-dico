@@ -5,6 +5,7 @@ import { modalFormulario } from '../ui/formulario.js';
 import { cabecalhoPagina, listaEventos } from '../ui/componentes.js';
 import { db } from '../core/store.js';
 import { panoramaCliente, nomeUsuario, processoDe } from '../core/dominio.js';
+import { parcelasDo, situacaoParcela } from '../core/financas.js';
 import { relatorioCliente } from '../core/ia.js';
 import { whatsapp, email, baixarArquivo } from '../core/integracoes.js';
 import {
@@ -137,10 +138,11 @@ function fichaCliente(id) {
     financeiro: () => v.financeiro.length ? v.financeiro.map((f) => `
       <div style="margin-bottom:.8rem"><div class="negrito">${esc(f.descricao)} — ${esc(fmtMoeda(f.valorContratado))}</div>
       <table class="tabela"><thead><tr><th>Parcela</th><th>Vencimento</th><th>Valor</th><th>Situação</th></tr></thead>
-      <tbody>${(f.parcelas || []).map((p) => `<tr><td>${p.n}</td><td>${esc(fmtData(p.vencimento))}</td>
+      <tbody>${parcelasDo(f).map((p) => `<tr><td>${esc(p.rotulo)}</td>
+        <td>${esc(fmtData(p.vencimento))}</td>
         <td>${esc(fmtMoeda(p.valor))}</td>
         <td>${p.pagoEm ? `<span class="selo selo--ok">pago em ${esc(fmtData(p.pagoEm))}</span>`
-    : `<span class="selo selo--${p.vencimento < new Date().toISOString().slice(0, 10) ? 'fatal' : 'neutro'}">em aberto</span>`}</td></tr>`).join('')}
+    : `<span class="selo selo--${situacaoParcela(p) === 'atrasada' ? 'fatal' : 'neutro'}">${situacaoParcela(p)}</span>`}</td></tr>`).join('')}
       </tbody></table></div>`).join('') : '<div class="vazio">Nenhum contrato de honorários.</div>',
 
     historico: () => historicoHTML('clientes', id),

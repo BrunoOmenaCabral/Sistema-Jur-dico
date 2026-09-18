@@ -12,6 +12,7 @@ import {
   FASES_PROCESSO, STATUS_PROCESSO, situacaoPrazo,
   dependenciasDoProcesso, arquivarProcesso, reativarProcesso, excluirProcesso, revisarVinculos,
   vincularProcessos, desvincularProcessos, vinculosDoProcesso, RELACOES_PROCESSO,
+  ordenarProcessos,
 } from '../core/dominio.js';
 import { fmtCNJ, validarCNJ, cnjDigitos, fmtData, fmtMoeda, norm, hoje, diffDias } from '../core/util.js';
 import { ir, recarregar } from '../ui/roteador.js';
@@ -50,7 +51,7 @@ export function processos({ params }) {
   </div>`);
 
   const desenhar = () => {
-    let lista = db.listar('processos');
+    let lista = ordenarProcessos(db.listar('processos'));
     if (filtroProc.status) lista = lista.filter((p) => p.status === filtroProc.status);
     if (filtroProc.responsavelId) lista = lista.filter((p) => p.responsavelId === filtroProc.responsavelId);
     if (filtroProc.busca) {

@@ -189,7 +189,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .grade { display: grid; gap: .7rem; }
 .grade--2 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .grade--3 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
-.grade--indicadores { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.grade--indicadores { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 .grade--painel { grid-template-columns: 1fr; }
 @media (min-width: 1180px) { .grade--painel { grid-template-columns: minmax(0, 1fr) 340px; } }
 
@@ -201,6 +201,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .indicador__rotulo { font-size: .68rem; letter-spacing: .08em; text-transform: uppercase;
   color: var(--texto-3); font-weight: 600; }
 .indicador__valor { font-size: 1.9rem; font-weight: 700; line-height: 1.15; letter-spacing: -.02em; }
+/* Painel de valores em reais: cinco cartões lado a lado não comportam o corpo
+   grande, e número cortado ou quebrado ao meio não se lê. */
+.grade--compacta .indicador__valor { font-size: 1.3rem; white-space: nowrap; }
 .indicador__nota { font-size: .74rem; color: var(--texto-2); }
 .indicador--fatal { border-left-color: var(--c-fatal); }
 .indicador--fatal .indicador__valor { color: var(--c-fatal); }
@@ -463,3 +466,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .sugestao__item--ativo, .sugestao__item:hover { background: var(--surface-3); }
 .campo__escolhido:empty { display: none; }
+
+/* ------------------------------------------------------- financeiro ----- */
+
+.linha--atraso { background: color-mix(in srgb, var(--c-fatal) 7%, transparent); }
+.texto-fatal { color: var(--c-fatal); font-weight: 600; }

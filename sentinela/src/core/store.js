@@ -19,6 +19,7 @@ const CHAVE_FILA = 'sentinela.fila.v1';
 export const COLECOES = [
   'usuarios', 'clientes', 'processos', 'prazos', 'tarefas', 'audiencias',
   'publicacoes', 'documentos', 'comunicacoes', 'financeiro', 'movimentacoes',
+  'receitas', 'cobrancas',
   'auditoria', 'notificacoes', 'feriados', 'suspensoes',
 ];
 

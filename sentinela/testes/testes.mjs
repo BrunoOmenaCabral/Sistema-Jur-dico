@@ -29,6 +29,7 @@ const { arquivadoEmDefinitivo, interpretarListaProcessos, tribunais, oabsMonitor
   publicacoes: servicoPublicacoes } = await import('../src/core/integracoes.js');
 const { agruparEmProcessos, comunicacaoComoPublicacao, consultarPorOAB, BASE_PADRAO, parsearOAB } =
   await import('../src/core/djen.js');
+const fin = await import('../src/core/financas.js');
 const { definirPonte: definirPonteInicial } = await import('../src/core/ponte.js');
 definirPonteInicial(false); // consultas diretas, salvo onde o teste disser o contrário
 
@@ -1220,6 +1221,166 @@ teste('cada relação tem recíproca declarada e rótulo legível', () => {
 
 /* ------------------ consulta pública do tribunal (PJe) -------------------- */
 
+console.log('\nFinanças: cobrança, receitas e relatório');
+
+// Base própria para as contas do ano, para não depender do que outros testes
+// deixaram gravado.
+const clienteFin = db.inserir('clientes', { nome: 'Construtora Aurora', tipo: 'pj',
+  telefone: '(81) 99999-1234' });
+const contratoFin = db.inserir('financeiro', {
+  clienteId: clienteFin.id, descricao: 'Ação de cobrança', valorContratado: 12000,
+  formaPagamento: 'entrada_parcelado', dataContrato: '2026-01-10', status: 'ativo',
+  parcelas: fin.gerarParcelas({ valorTotal: 12000, valorEntrada: 2000,
+    dataContrato: '2026-01-10', formaPagamento: 'entrada_parcelado',
+    numeroParcelas: 4, inicioParcelas: '2026-02-10' }),
+});
+db.inserir('receitas', { clienteId: clienteFin.id, descricao: 'Honorários de sucumbência',
+  valor: 3500, dataRecebimento: '2026-03-20', numeroProcesso: '' });
+db.inserir('receitas', { clienteId: null, nomeParte: 'Espólio de João', descricao: 'Alvará',
+  valor: 1500, dataRecebimento: '2026-03-28' });
+
+teste('parcela vencida e não paga conta como atrasada', () => {
+  const abertas = fin.todasAsParcelas({ ref: '2026-09-18', somenteAbertas: true })
+    .filter((x) => x.contratoId === contratoFin.id);
+  assert.equal(abertas.length, 4);
+  assert.ok(abertas.every((x) => x.situacao === 'atrasada'));
+});
+teste('a entrada não aparece entre as parcelas em aberto', () => {
+  const abertas = fin.todasAsParcelas({ ref: '2026-09-18', somenteAbertas: true })
+    .filter((x) => x.contratoId === contratoFin.id);
+  assert.ok(!abertas.some((x) => x.numero === 0));
+});
+teste('o agrupamento por cliente põe o atraso à frente', () => {
+  const grupos = fin.clientesComParcelasEmAberto({ ref: '2026-09-18' });
+  const alvo = grupos.find((g) => g.clienteId === clienteFin.id);
+  assert.ok(alvo);
+  assert.equal(alvo.atrasadas, 4);
+  assert.equal(alvo.totalAtrasado, 10000);
+  assert.equal(grupos[0].totalAtrasado >= grupos.at(-1).totalAtrasado, true);
+});
+teste('registrar pagamento grava data e valor efetivamente pago', () => {
+  const r = fin.registrarPagamento(contratoFin.id, 1, { data: '2026-09-18', valorPago: 2400 });
+  assert.equal(r.ok, true);
+  const p = fin.parcelasDo(db.obter('financeiro', contratoFin.id)).find((x) => x.numero === 1);
+  assert.equal(p.pagoEm, '2026-09-18');
+  assert.equal(p.valorPago, 2400);
+  assert.equal(fin.situacaoParcela(p, '2026-09-18'), 'paga');
+});
+teste('o telefone recebe o código do país quando falta', () => {
+  assert.equal(fin.telefoneInternacional('(81) 99999-1234'), '5581999991234');
+  assert.equal(fin.telefoneInternacional('5581999991234'), '5581999991234');
+  assert.equal(fin.telefoneInternacional(''), null);
+});
+teste('a mensagem de cobrança nomeia parcela, vencimento e valor', () => {
+  const m = fin.mensagemCobranca({ nome: 'Construtora Aurora', numero: 2,
+    vencimento: '2026-03-10', valor: 2500 });
+  assert.match(m, /^Construtora Aurora, tudo bem\?/);
+  assert.match(m, /parcela nº 2/);
+  assert.match(m, /10\/03\/2026/);
+  assert.match(m, /2\.500,00/);
+  assert.match(m, /comprovante para confer/);
+  const link = fin.linkWhatsApp('(81) 99999-1234', m);
+  assert.match(link, /^https:\/\/api\.whatsapp\.com\/send\?phone=5581999991234&text=/);
+});
+teste('a cobrança feita fica registrada', () => {
+  fin.registrarCobranca({ clienteId: clienteFin.id, contratoId: contratoFin.id, numero: 2 });
+  const lista = fin.cobrancasDaParcela(contratoFin.id, 2);
+  assert.equal(lista.length, 1);
+  assert.match(lista[0].observacoes, /WhatsApp/);
+});
+teste('receitas judiciais são lidas pelo mês de recebimento', () => {
+  const marco = fin.receitasDoMes('2026-03');
+  assert.equal(marco.length, 2);
+  assert.equal(fin.totalDasReceitas(marco), 5000);
+  assert.equal(fin.receitasDoMes('2026-04').length, 0);
+});
+teste('a parte da receita é o cliente ou o nome digitado', () => {
+  const marco = fin.receitasDoMes('2026-03');
+  const nome = (id) => db.obter('clientes', id)?.nome || '';
+  const semCliente = marco.find((r) => !r.clienteId);
+  const comCliente = marco.find((r) => r.clienteId);
+  assert.equal(fin.parteDaReceita(semCliente, nome), 'Espólio de João');
+  assert.equal(fin.parteDaReceita(comCliente, nome), 'Construtora Aurora');
+});
+teste('o resumo do ano separa recebido, pendente e vencido', () => {
+  const r = fin.resumoAnual(2026, '2026-09-18');
+  assert.equal(r.linhas.length, 12);
+  const janeiro = r.linhas.find((l) => l.mes === '2026-01');
+  assert.equal(janeiro.recebido, 2000);      // a entrada, quitada na assinatura
+  const fevereiro = r.linhas.find((l) => l.mes === '2026-02');
+  assert.equal(fevereiro.recebido, 2400);    // parcela 1, paga com valor próprio
+  const marco = r.linhas.find((l) => l.mes === '2026-03');
+  assert.equal(marco.vencido, 2500);
+  assert.equal(marco.judiciais, 5000);
+  assert.equal(marco.total, 5000);
+});
+teste('os totais do ano somam exatamente o que as linhas mostram', () => {
+  // A base dos testes tem outros contratos; o que se afirma é a coerência
+  // interna do resumo, não um valor absoluto.
+  const r = fin.resumoAnual(2026, '2026-09-18');
+  const soma = (campo) => r.linhas.reduce((s, l) => s + l[campo], 0);
+  assert.equal(r.totais.recebido, soma('recebido'));
+  assert.equal(r.totais.judiciais, soma('judiciais'));
+  assert.equal(r.totais.pendente, soma('pendente'));
+  assert.equal(r.totais.vencido, soma('vencido'));
+  assert.equal(r.totais.parcelas, soma('parcelas'));
+  assert.equal(r.totais.total, r.totais.recebido + r.totais.judiciais);
+  // As duas receitas lançadas aqui caem em março e entram no total do ano.
+  assert.equal(r.linhas.find((l) => l.mes === '2026-03').judiciais, 5000);
+  assert.ok(r.totais.judiciais >= 5000);
+});
+teste('o CSV do relatório repete a ordem das colunas da tela', () => {
+  const csv = fin.csvDoResumo(fin.resumoAnual(2026, '2026-09-18'));
+  const linhas = csv.split('\n');
+  assert.equal(linhas[0],
+    'Mês,Recebido (Parcelas),Receitas Judiciais,Total Recebido,Pendente,Vencido,Parcelas');
+  assert.equal(linhas.length, 13);
+  const marco = linhas.find((l) => l.startsWith('2026-03'));
+  assert.match(marco, /^2026-03,/);
+  assert.ok(marco.includes('5000,00'), marco);
+});
+teste('a navegação por mês não avança além do mês corrente', () => {
+  assert.equal(fin.mesAnterior('2026-03'), '2026-02');
+  assert.equal(fin.mesSeguinte('2026-02'), '2026-03');
+  assert.equal(fin.podeAvancar(fin.mesCorrente()), false);
+  assert.equal(fin.podeAvancar('2020-01'), true);
+});
+teste('contrato encerrado e quitado é arquivado; com dívida, não', () => {
+  const quitado = db.inserir('financeiro', { clienteId: clienteFin.id, descricao: 'Consultivo',
+    valorContratado: 500, status: 'ativo',
+    parcelas: [{ numero: 1, valor: 500, vencimento: '2026-05-10', pagoEm: '2026-05-10', valorPago: 500 }] });
+  const devendo = db.inserir('financeiro', { clienteId: clienteFin.id, descricao: 'Parecer',
+    valorContratado: 800, status: 'ativo',
+    parcelas: [{ numero: 1, valor: 800, vencimento: '2026-05-10', pagoEm: null }] });
+  fin.arquivarContratosEncerrados('2026-09-18');
+  assert.equal(db.obter('financeiro', quitado.id).status, 'arquivado');
+  assert.equal(db.obter('financeiro', devendo.id).status, 'ativo');
+});
+
+console.log('\nOrdem dos processos');
+
+const { ordenarProcessos } = await import('../src/core/dominio.js');
+
+teste('a lista vai do processo mais novo para o mais antigo', () => {
+  const lista = [
+    { numeroCNJ: '00071378820268172001' },   // 2026
+    { numeroCNJ: '00012345620238170001' },   // 2023
+    { numeroCNJ: '00099999920268170001' },   // 2026, sequencial maior
+    { numeroCNJ: '00000012320248170001' },   // 2024
+  ];
+  assert.deepEqual(ordenarProcessos(lista).map((p) => p.numeroCNJ.slice(9, 13)),
+    ['2026', '2026', '2024', '2023']);
+  // Dentro do mesmo ano, o sequencial maior vem primeiro.
+  assert.equal(ordenarProcessos(lista)[0].numeroCNJ, '00099999920268170001');
+});
+teste('processo sem número válido não desarruma a lista', () => {
+  const lista = [{ numeroCNJ: '123', criadoEm: '2026-09-18' },
+    { numeroCNJ: '00071378820268172001' }];
+  const r = ordenarProcessos(lista);
+  assert.equal(r[0].numeroCNJ, '00071378820268172001');
+  assert.equal(r.length, 2);
+});
+
 console.log('\nConsulta pública do tribunal');
 
 const { lerDetalhePJe, movimentoPJeComoRegistro, tribunalPJe, documentoPJe } =
@@ -1775,49 +1936,66 @@ teste('o grau acompanha o registro até a linha do tempo', () => {
   assert.ok(linha.some((i) => i.grau === 'TR'));
 });
 
-/* ============================ honorários: entrada e parcelas ============== */
+/* =============================== finanças do escritório =================== */
 
-const { montarParcelas, somaParcelas, PERIODICIDADES } = await import('../src/core/dominio.js');
+console.log('\nFinanças: contratos e parcelas');
 
-teste('sem entrada, o total divide-se nas parcelas pedidas', () => {
-  const p = montarParcelas({ total: 3000, parcelas: 3, primeiroVencimento: '2026-10-05' });
-  assert.equal(p.length, 3);
-  assert.equal(somaParcelas(p), 3000);
-  assert.deepEqual(p.map((x) => x.vencimento), ['2026-10-05', '2026-11-05', '2026-12-05']);
-});
-teste('a entrada entra como primeira linha, com valor e data próprios', () => {
-  const p = montarParcelas({
-    total: 10000, entrada: 2000, dataEntrada: '2026-09-20',
-    parcelas: 4, primeiroVencimento: '2026-10-20',
-  });
-  assert.equal(p.length, 5);
-  assert.equal(p[0].rotulo, 'Entrada');
-  assert.equal(p[0].valor, 2000);
-  assert.equal(p[0].vencimento, '2026-09-20');
-  assert.deepEqual(p.slice(1).map((x) => x.valor), [2000, 2000, 2000, 2000]);
-  assert.equal(somaParcelas(p), 10000);
-});
-teste('o arredondamento sobra na última parcela e a soma fecha no centavo', () => {
-  const p = montarParcelas({ total: 1000, parcelas: 3, primeiroVencimento: '2026-10-01' });
-  assert.deepEqual(p.map((x) => x.valor), [333.33, 333.33, 333.34]);
-  assert.equal(somaParcelas(p), 1000);
-});
-teste('a periodicidade muda o intervalo entre os vencimentos', () => {
-  const q = montarParcelas({ total: 900, parcelas: 3, primeiroVencimento: '2026-10-01', periodicidade: 'quinzenal' });
-  assert.deepEqual(q.map((x) => x.vencimento), ['2026-10-01', '2026-10-16', '2026-10-31']);
-  const b = montarParcelas({ total: 900, parcelas: 3, primeiroVencimento: '2026-10-01', periodicidade: 'bimestral' });
-  assert.deepEqual(b.map((x) => x.vencimento), ['2026-10-01', '2026-12-01', '2027-02-01']);
-  assert.ok(PERIODICIDADES.some((x) => x.id === 'mensal'));
-});
-teste('entrada que cobre o contrato dispensa parcelas do saldo', () => {
-  const p = montarParcelas({ total: 2000, entrada: 2000, dataEntrada: '2026-09-20', parcelas: 6 });
+
+teste('à vista gera uma única parcela, no valor do contrato', () => {
+  const p = fin.gerarParcelas({ valorTotal: 3000, dataContrato: '2026-09-18',
+    formaPagamento: 'a_vista' });
   assert.equal(p.length, 1);
-  assert.equal(somaParcelas(p), 2000);
+  assert.equal(p[0].numero, 1);
+  assert.equal(p[0].valor, 3000);
+  assert.equal(p[0].vencimento, '2026-09-18');
+  assert.equal(p[0].pagoEm, null);
 });
-teste('nenhuma parcela fica sem vencimento quando a data não é informada', () => {
-  const p = montarParcelas({ total: 1200, entrada: 300, dataEntrada: '2026-09-17', parcelas: 3 });
-  assert.ok(p.every((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.vencimento)));
-  assert.equal(somaParcelas(p), 1200);
+teste('à vista aceita data de pagamento própria', () => {
+  const p = fin.gerarParcelas({ valorTotal: 1000, dataContrato: '2026-09-18',
+    formaPagamento: 'a_vista', dataPagamentoAvista: '2026-10-05' });
+  assert.equal(p[0].vencimento, '2026-10-05');
+});
+teste('parcelado distribui em meses sucessivos a partir do início', () => {
+  const p = fin.gerarParcelas({ valorTotal: 3000, dataContrato: '2026-09-18',
+    formaPagamento: 'parcelado', numeroParcelas: 3, inicioParcelas: '2026-10-10' });
+  assert.deepEqual(p.map((x) => x.vencimento), ['2026-10-10', '2026-11-10', '2026-12-10']);
+  assert.deepEqual(p.map((x) => x.numero), [1, 2, 3]);
+  assert.equal(fin.somaParcelas(p), 3000);
+});
+teste('a última parcela absorve a diferença do arredondamento', () => {
+  const p = fin.gerarParcelas({ valorTotal: 1000, formaPagamento: 'parcelado',
+    numeroParcelas: 3, dataContrato: '2026-09-01' });
+  assert.deepEqual(p.map((x) => x.valor), [333.33, 333.33, 333.34]);
+  assert.equal(fin.somaParcelas(p), 1000);
+});
+teste('entrada mais parcelas: a entrada é a parcela zero, já quitada', () => {
+  const p = fin.gerarParcelas({ valorTotal: 10000, valorEntrada: 2000,
+    dataContrato: '2026-09-18', formaPagamento: 'entrada_parcelado',
+    numeroParcelas: 4, inicioParcelas: '2026-10-18' });
+  assert.equal(p.length, 5);
+  assert.equal(p[0].numero, 0);
+  assert.equal(p[0].valor, 2000);
+  assert.equal(p[0].pagoEm, '2026-09-18');
+  assert.equal(p[0].valorPago, 2000);
+  assert.deepEqual(p.slice(1).map((x) => x.valor), [2000, 2000, 2000, 2000]);
+  assert.equal(fin.somaParcelas(p), 10000);
+});
+teste('entrada não pode superar o valor contratado', () => {
+  const p = fin.gerarParcelas({ valorTotal: 1000, valorEntrada: 5000,
+    formaPagamento: 'entrada_parcelado', numeroParcelas: 2, dataContrato: '2026-09-01' });
+  assert.equal(fin.somaParcelas(p), 1000);
+  assert.equal(p[0].valor, 1000);
+});
+teste('a situação da parcela vem da data, não de campo que envelhece', () => {
+  assert.equal(fin.situacaoParcela({ vencimento: '2026-09-10', pagoEm: null }, '2026-09-18'), 'atrasada');
+  assert.equal(fin.situacaoParcela({ vencimento: '2026-09-30', pagoEm: null }, '2026-09-18'), 'pendente');
+  assert.equal(fin.situacaoParcela({ vencimento: '2026-09-10', pagoEm: '2026-09-11' }, '2026-09-18'), 'paga');
+});
+teste('parcela gravada na versão anterior continua legível', () => {
+  const p = fin.normalizarParcela({ n: 2, valor: 500, vencimento: '2026-10-01', pagoEm: '2026-10-02' }, 1);
+  assert.equal(p.numero, 2);
+  assert.equal(p.rotulo, '2ª parcela');
+  assert.equal(p.valorPago, 500);
 });
 
 console.log(`\n${passou} verificações concluídas.`);

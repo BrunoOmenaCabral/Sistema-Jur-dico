@@ -164,11 +164,18 @@ export async function semear({ forcar = false } = {}) {
 
   db.inserir('financeiro', { clienteId: clientes[1].id, processoId: processos[1].id,
     descricao: 'Honorários — execução fiscal', valorContratado: 18000,
+    dataContrato: addDays(hoje(), -30), formaPagamento: 'parcelado', numeroParcelas: 3,
+    status: 'ativo',
     parcelas: [
-      { n: 1, valor: 6000, vencimento: addDays(hoje(), -30), pagoEm: addDays(hoje(), -28) },
-      { n: 2, valor: 6000, vencimento: addDays(hoje(), 1), pagoEm: null },
-      { n: 3, valor: 6000, vencimento: addDays(hoje(), 31), pagoEm: null },
+      { numero: 1, valor: 6000, vencimento: addDays(hoje(), -30),
+        pagoEm: addDays(hoje(), -28), valorPago: 6000 },
+      { numero: 2, valor: 6000, vencimento: addDays(hoje(), 1), pagoEm: null, valorPago: null },
+      { numero: 3, valor: 6000, vencimento: addDays(hoje(), 31), pagoEm: null, valorPago: null },
     ] }, 'Contrato de honorários de demonstração');
+
+  db.inserir('receitas', { clienteId: clientes[0].id, descricao: 'Honorários de sucumbência',
+    valor: 4200, dataRecebimento: addDays(hoje(), -12), numeroProcesso: '' },
+  'Receita judicial de demonstração');
 
   db.inserir('feriados', { data: `${hoje().slice(0, 4)}-06-24`, nome: 'São João',
     abrangencia: 'estadual', uf: 'PE' }, 'Feriado estadual');
