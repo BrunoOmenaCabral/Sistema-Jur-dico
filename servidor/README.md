@@ -174,6 +174,17 @@ redefinição que vale uma vez e por tempo limitado. Sem provedor de e-mail
 configurado, o link é registrado no console do servidor, para que ninguém fique
 trancado do lado de fora.
 
+## Conferência da instalação
+
+`GET /api/saude` responde com o estado da instalação: qual persistência está em
+uso, se os dados sobrevivem ao reinício, se há provedor de e-mail, se o endereço
+público foi informado e se o segredo de sessão é fixo. O campo `pendencias` diz,
+em texto corrido, o que falta e por que importa. Nenhum segredo é exposto — só
+se cada um está definido.
+
+Aberto o serviço pela primeira vez, esse é o endereço a consultar antes de
+cadastrar qualquer coisa: `pendencias` vazio significa que nada se perderá.
+
 ## Hospedagem
 
 O servidor guarda os dados em disco e serve também a interface, de modo que

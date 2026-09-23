@@ -5,7 +5,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { config } from './config.js';
 import { enviar as enviarEmail, disponivel as emailDisponivel } from './email.js';
-import { abrirBanco } from './banco.js';
+import { abrirBanco, banco } from './banco.js';
 import {
   criarToken, lerToken, cookieDeSessao, cookieDeSaida, lerCookies, NOME_COOKIE,
   registrarFalha, limparFalhas, bloqueado,
@@ -88,8 +88,33 @@ async function api(req, res, url) {
   const rota = url.pathname.replace(/^\/api/, '') || '/';
   const metodo = req.method;
 
+  // Diagnóstico da instalação. Diz, sem expor segredo algum, se cada peça da
+  // hospedagem está no lugar: é o que permite conferir o resultado de cada
+  // ajuste abrindo um endereço, sem acesso ao terminal do servidor.
   if (rota === '/saude') {
-    return responder(res, 200, { ok: true, servico: 'sentinela', versao: 1 });
+    const persistencia = banco.tipo;
+    const gerenciado = persistencia === 'turso';
+    return responder(res, 200, {
+      ok: true,
+      servico: 'sentinela',
+      versao: 1,
+      persistencia,
+      // Em hospedagem sem disco, só o banco gerenciado preserva os dados.
+      dadosPreservados: gerenciado,
+      email: emailDisponivel(),
+      enderecoPublico: Boolean(config.enderecoPublico),
+      segredoFixo: Boolean(process.env.SENTINELA_SEGREDO),
+      pendencias: [
+        gerenciado ? null : 'Defina TURSO_DATABASE_URL e TURSO_AUTH_TOKEN: sem banco '
+          + 'gerenciado, os dados se perdem quando a hospedagem recria o serviço.',
+        emailDisponivel() ? null : 'Defina SENTINELA_EMAIL_ENDPOINT, SENTINELA_EMAIL_CHAVE e '
+          + 'SENTINELA_EMAIL_REMETENTE para o link de redefinição chegar ao e-mail.',
+        config.enderecoPublico ? null : 'Defina SENTINELA_ENDERECO com o endereço público, '
+          + 'usado no link de redefinição de senha.',
+        process.env.SENTINELA_SEGREDO ? null : 'Defina SENTINELA_SEGREDO: sem ele, cada '
+          + 'reinício do serviço derruba as sessões abertas.',
+      ].filter(Boolean),
+    });
   }
 
   // Cadastro que qualquer pessoa faz sozinha: conta nova, com o seu primeiro
