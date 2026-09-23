@@ -43,6 +43,11 @@ export const config = {
   datajudChave: process.env.SENTINELA_DATAJUD_CHAVE
     || 'cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==',
   // Endereço público do sistema, usado no link enviado por e-mail.
+  // Banco gerenciado: com ele, a hospedagem dispensa disco próprio.
+  turso: {
+    url: (process.env.TURSO_DATABASE_URL || '').trim(),
+    token: (process.env.TURSO_AUTH_TOKEN || '').trim(),
+  },
   enderecoPublico: (process.env.SENTINELA_ENDERECO || '').replace(/\/$/, ''),
   minutosRecuperacao: Number(process.env.SENTINELA_RECUPERACAO_MINUTOS || 30),
 };

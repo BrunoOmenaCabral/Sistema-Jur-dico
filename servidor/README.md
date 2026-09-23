@@ -180,11 +180,19 @@ O servidor guarda os dados em disco e serve também a interface, de modo que
 tudo fica na mesma origem — é o que faz o cookie de sessão funcionar sem
 exceções de navegador.
 
+Os dados podem ficar em disco da própria máquina ou em banco gerenciado. Com
+banco gerenciado, o serviço deixa de guardar qualquer coisa que não possa
+perder, e por isso cabe em plano gratuito: hibernar ou ser recriado passa a
+custar apenas o tempo da primeira resposta.
+
+Defina `TURSO_DATABASE_URL` e `TURSO_AUTH_TOKEN` e a persistência passa a ser o
+Turso (libSQL na nuvem, mesmo dialeto do SQLite já usado aqui). Sem elas, valem
+o SQLite em arquivo e, na falta dele, o arquivo JSON — bom para uso local e
+para servidor com disco próprio.
+
 Há um `render.yaml` na raiz do repositório, pronto para o Render: serviço
-Docker, verificação de saúde em `/api/saude` e disco de 1 GB montado em
-`/dados`. Qualquer hospedagem com disco persistente serve igualmente (Fly.io,
-Railway, VPS); o que não serve é hospedagem apenas estática ou de funções sem
-disco, porque a base não sobreviveria ao reinício.
+Docker, plano gratuito e verificação de saúde em `/api/saude`. Qualquer
+hospedagem que rode um processo Node serve igualmente.
 
 Variáveis a definir na hospedagem:
 
@@ -196,6 +204,8 @@ Variáveis a definir na hospedagem:
 | `SENTINELA_EMAIL_CHAVE` | Credencial do provedor de e-mail |
 | `SENTINELA_EMAIL_REMETENTE` | Remetente verificado no provedor |
 | `SENTINELA_HTTPS` | `true` atrás de HTTPS, para o cookie ir marcado como seguro |
+| `TURSO_DATABASE_URL` | Endereço do banco gerenciado; sem ele, usa-se disco local |
+| `TURSO_AUTH_TOKEN` | Credencial do banco gerenciado |
 
 **Docker:**
 

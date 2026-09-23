@@ -1,24 +1,25 @@
 # Hospedagem do servidor do Jursistemy.
 #
-# O servidor guarda contas e dados em disco próprio, e serve também a interface:
-# tudo fica na mesma origem, que é o que faz o cookie de sessão funcionar sem
-# exceções de navegador. O disco é obrigatório — sem ele, cada reinício
-# apagaria a base.
+# Os dados ficam no banco gerenciado (Turso), e não em disco da máquina. É o que
+# permite plano gratuito: o serviço pode hibernar e ser recriado sem perder
+# nada, porque nada relevante mora nele. O servidor serve também a interface,
+# de modo que tudo fica na mesma origem — é o que faz o cookie de sessão
+# funcionar sem exceções de navegador.
 services:
   - type: web
     name: jursistemy
     runtime: docker
     dockerfilePath: ./servidor/Dockerfile
     dockerContext: .
-    plan: starter
+    plan: free
     healthCheckPath: /api/saude
-    disk:
-      name: dados
-      mountPath: /dados
-      sizeGB: 1
     envVars:
-      - key: SENTINELA_DADOS
-        value: /dados
+      # Banco gerenciado. Sem estas duas, o servidor cai para disco local, que
+      # plano gratuito não preserva.
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
       - key: SENTINELA_HTTPS
         value: "true"
       # Endereço público do serviço, usado no link de redefinição de senha.
@@ -31,6 +32,7 @@ services:
         sync: false
       - key: SENTINELA_EMAIL_REMETENTE
         sync: false
-      # Segredo de assinatura das sessões. Trocá-lo encerra todas as sessões.
+      # Segredo de assinatura das sessões. Em serviço que reinicia sozinho, ele
+      # precisa ser fixo: gerado a cada partida, toda sessão cairia.
       - key: SENTINELA_SEGREDO
         generateValue: true

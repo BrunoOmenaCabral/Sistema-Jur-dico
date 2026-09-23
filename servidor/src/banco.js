@@ -27,16 +27,11 @@ let impl = null;
 const agora = () => new Date().toISOString();
 const normalizarEmail = (s) => String(s ?? '').trim().toLowerCase();
 
-async function abrirSqlite() {
-  const { DatabaseSync } = await import('node:sqlite');
-  const bd = new DatabaseSync(join(config.dadosDir, 'sentinela.db'));
-  bd.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-    CREATE TABLE IF NOT EXISTS contas (
+const ESQUEMA = [
+  `CREATE TABLE IF NOT EXISTS contas (
       id TEXT PRIMARY KEY, nome TEXT NOT NULL, criado_em TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS registros (
+    )`,
+  `CREATE TABLE IF NOT EXISTS registros (
       conta_id TEXT NOT NULL DEFAULT '${CONTA_INICIAL}',
       colecao TEXT NOT NULL,
       id TEXT NOT NULL,
@@ -44,32 +39,38 @@ async function abrirSqlite() {
       atualizado_em TEXT NOT NULL,
       excluido_em TEXT,
       PRIMARY KEY (conta_id, colecao, id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_registros_atualizacao ON registros (conta_id, atualizado_em);
-    -- O acesso é por e-mail, que não se repete entre contas: é por aqui que se
+    )`,
+  `CREATE INDEX IF NOT EXISTS idx_registros_atualizacao ON registros (conta_id, atualizado_em)`,
+  `-- O acesso é por e-mail, que não se repete entre contas: é por aqui que se
     -- descobre a conta de quem está entrando.
     CREATE TABLE IF NOT EXISTS usuarios_indice (
       email TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, conta_id TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS credenciais (
+    )`,
+  `CREATE TABLE IF NOT EXISTS credenciais (
       usuario_id TEXT PRIMARY KEY, hash TEXT NOT NULL, sal TEXT NOT NULL,
       atualizado_em TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS auditoria (
+    )`,
+  `CREATE TABLE IF NOT EXISTS auditoria (
       id TEXT PRIMARY KEY, conta_id TEXT NOT NULL DEFAULT '${CONTA_INICIAL}',
       quando TEXT NOT NULL, usuario_id TEXT, usuario_nome TEXT,
       colecao TEXT, registro_id TEXT, acao TEXT, detalhe TEXT, antes TEXT, depois TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_auditoria_quando ON auditoria (conta_id, quando);
-    CREATE TABLE IF NOT EXISTS configuracoes (
+    )`,
+  `CREATE INDEX IF NOT EXISTS idx_auditoria_quando ON auditoria (conta_id, quando)`,
+  `CREATE TABLE IF NOT EXISTS configuracoes (
       conta_id TEXT NOT NULL DEFAULT '${CONTA_INICIAL}', chave TEXT NOT NULL, valor TEXT NOT NULL,
       PRIMARY KEY (conta_id, chave)
-    );
-    CREATE TABLE IF NOT EXISTS recuperacoes (
+    )`,
+  `CREATE TABLE IF NOT EXISTS recuperacoes (
       token_hash TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, conta_id TEXT NOT NULL DEFAULT '',
       expira TEXT NOT NULL, criado_em TEXT NOT NULL
-    );
-  `);
+    )`,
+];
+
+async function abrirSqlite() {
+  const { DatabaseSync } = await import('node:sqlite');
+  const bd = new DatabaseSync(join(config.dadosDir, 'sentinela.db'));
+  bd.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+  for (const instrucao of ESQUEMA) bd.exec(instrucao);
 
   migrarParaContas(bd);
 
@@ -229,6 +230,192 @@ function migrarParaContas(bd) {
   for (const l of usuarios) indexarUsuario(bd, l.conta_id || CONTA_INICIAL, JSON.parse(l.dados));
 }
 
+/**
+ * Persistência no Turso (libSQL na nuvem), por HTTP.
+ *
+ * É o que permite hospedar sem disco: a base não vive na máquina que atende, e
+ * sim num banco gerenciado. O dialeto é o do SQLite, o mesmo já usado aqui, de
+ * modo que as consultas não mudam.
+ *
+ * A comunicação é a API de pipeline documentada pelo serviço: uma requisição
+ * com a lista de comandos e o fechamento da conexão ao fim.
+ */
+async function abrirTurso() {
+  const { url, token } = config.turso;
+  if (!url || !token) throw new Error('Turso não configurado.');
+  const endereco = `${url.replace(/\/$/, '').replace(/^libsql:/, 'https:')}/v2/pipeline`;
+
+  const paraArgumento = (v) => {
+    if (v === null || v === undefined) return { type: 'null' };
+    if (typeof v === 'number') {
+      return Number.isInteger(v)
+        ? { type: 'integer', value: String(v) }
+        : { type: 'float', value: v };
+    }
+    return { type: 'text', value: String(v) };
+  };
+  // O serviço devolve inteiro como texto, para não perder precisão no JSON.
+  const doValor = (c) => {
+    if (!c || c.type === 'null') return null;
+    if (c.type === 'integer') return Number(c.value);
+    if (c.type === 'float') return Number(c.value);
+    return c.value;
+  };
+
+  async function executar(comandos) {
+    const resposta = await fetch(endereco, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [...comandos.map(([sql, args = []]) => ({
+          type: 'execute', stmt: { sql, args: args.map(paraArgumento) },
+        })), { type: 'close' }],
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!resposta.ok) {
+      throw new Error(`Banco respondeu ${resposta.status}: ${(await resposta.text()).slice(0, 200)}`);
+    }
+    const corpo = await resposta.json();
+    const saida = [];
+    for (const r of corpo.results || []) {
+      if (r.type === 'error') throw new Error(r.error?.message || 'Erro no banco.');
+      const resultado = r.response?.result;
+      if (!resultado) continue;
+      const nomes = (resultado.cols || []).map((c) => c.name);
+      saida.push((resultado.rows || []).map((linha) => Object.fromEntries(
+        linha.map((celula, i) => [nomes[i], doValor(celula)]),
+      )));
+    }
+    return saida;
+  }
+
+  const consultar = async (sql, args = []) => (await executar([[sql, args]]))[0] || [];
+  const uma = async (sql, args = []) => (await consultar(sql, args))[0] || null;
+
+  await executar(ESQUEMA.map((sql) => [sql]));
+
+  const indexar = async (contaId, usuario) => {
+    const comandos = [['DELETE FROM usuarios_indice WHERE usuario_id = ?', [usuario.id]]];
+    if (!usuario.excluidoEm && usuario.email) {
+      comandos.push([`INSERT INTO usuarios_indice (email, usuario_id, conta_id) VALUES (?, ?, ?)
+        ON CONFLICT (email) DO UPDATE SET usuario_id = excluded.usuario_id,
+        conta_id = excluded.conta_id`, [normalizarEmail(usuario.email), usuario.id, contaId]]);
+    }
+    await executar(comandos);
+  };
+
+  return {
+    tipo: 'turso',
+
+    async criarConta(id, nome) {
+      await consultar('INSERT OR IGNORE INTO contas (id, nome, criado_em) VALUES (?, ?, ?)',
+        [id, nome, agora()]);
+      return { id, nome };
+    },
+    conta: (id) => uma('SELECT id, nome, criado_em FROM contas WHERE id = ?', [id]),
+    contas: () => consultar('SELECT id, nome, criado_em FROM contas ORDER BY criado_em'),
+    async acessoPorEmail(email) {
+      const l = await uma('SELECT usuario_id, conta_id FROM usuarios_indice WHERE email = ?',
+        [normalizarEmail(email)]);
+      return l ? { usuarioId: l.usuario_id, contaId: l.conta_id } : null;
+    },
+
+    async listar(contaId, colecao, { incluirExcluidos = false } = {}) {
+      const linhas = await consultar(
+        `SELECT dados FROM registros WHERE conta_id = ? AND colecao = ?`
+        + `${incluirExcluidos ? '' : ' AND excluido_em IS NULL'}`, [contaId, colecao]);
+      return linhas.map((l) => JSON.parse(l.dados));
+    },
+    async obter(contaId, colecao, id) {
+      const l = await uma('SELECT dados FROM registros WHERE conta_id = ? AND colecao = ? AND id = ?',
+        [contaId, colecao, id]);
+      return l ? JSON.parse(l.dados) : null;
+    },
+    async gravar(contaId, colecao, reg) {
+      await consultar(`INSERT INTO registros (conta_id, colecao, id, dados, atualizado_em, excluido_em)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (conta_id, colecao, id) DO UPDATE SET dados = excluded.dados,
+          atualizado_em = excluded.atualizado_em, excluido_em = excluded.excluido_em`,
+      [contaId, colecao, reg.id, JSON.stringify(reg), reg.atualizadoEm || agora(),
+        reg.excluidoEm || null]);
+      if (colecao === 'usuarios') await indexar(contaId, reg);
+      return reg;
+    },
+    async apagar(contaId, colecao, id) {
+      if (colecao === 'usuarios') {
+        await consultar('DELETE FROM usuarios_indice WHERE usuario_id = ?', [id]);
+      }
+      await consultar('DELETE FROM registros WHERE conta_id = ? AND colecao = ? AND id = ?',
+        [contaId, colecao, id]);
+    },
+    async alteradosDesde(contaId, momento) {
+      const linhas = await consultar(`SELECT colecao, dados FROM registros
+        WHERE conta_id = ? AND atualizado_em > ? ORDER BY atualizado_em`, [contaId, momento]);
+      return linhas.map((l) => ({ colecao: l.colecao, registro: JSON.parse(l.dados) }));
+    },
+
+    credencial: (usuarioId) =>
+      uma('SELECT hash, sal FROM credenciais WHERE usuario_id = ?', [usuarioId]),
+    async salvarCredencial(usuarioId, hash, sal) {
+      await consultar(`INSERT INTO credenciais (usuario_id, hash, sal, atualizado_em)
+        VALUES (?, ?, ?, ?) ON CONFLICT (usuario_id) DO UPDATE SET hash = excluded.hash,
+        sal = excluded.sal, atualizado_em = excluded.atualizado_em`,
+      [usuarioId, hash, sal, agora()]);
+    },
+    async salvarRecuperacao(tokenHash, usuarioId, contaId, expira) {
+      await executar([
+        ['DELETE FROM recuperacoes WHERE usuario_id = ?', [usuarioId]],
+        [`INSERT INTO recuperacoes (token_hash, usuario_id, conta_id, expira, criado_em)
+          VALUES (?, ?, ?, ?, ?)`, [tokenHash, usuarioId, contaId, expira, agora()]],
+      ]);
+    },
+    async recuperacao(tokenHash) {
+      const l = await uma(
+        'SELECT usuario_id, conta_id, expira FROM recuperacoes WHERE token_hash = ?', [tokenHash]);
+      return l ? { usuarioId: l.usuario_id, contaId: l.conta_id, expira: l.expira } : null;
+    },
+    apagarRecuperacao: (tokenHash) =>
+      consultar('DELETE FROM recuperacoes WHERE token_hash = ?', [tokenHash]),
+    limparRecuperacoesVencidas: () =>
+      consultar('DELETE FROM recuperacoes WHERE expira < ?', [agora()]),
+
+    async registrarAuditoria(contaId, e) {
+      await consultar(`INSERT INTO auditoria (id, conta_id, quando, usuario_id, usuario_nome,
+        colecao, registro_id, acao, detalhe, antes, depois)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [e.id, contaId, e.quando, e.usuarioId, e.usuarioNome, e.colecao, e.registroId, e.acao,
+        e.detalhe || null, e.antes ? JSON.stringify(e.antes) : null,
+        e.depois ? JSON.stringify(e.depois) : null]);
+      return e;
+    },
+    async auditoria(contaId, { desde = null, limite = 500 } = {}) {
+      const linhas = desde
+        ? await consultar(`SELECT * FROM auditoria WHERE conta_id = ? AND quando > ?
+            ORDER BY quando DESC LIMIT ?`, [contaId, desde, limite])
+        : await consultar('SELECT * FROM auditoria WHERE conta_id = ? ORDER BY quando DESC LIMIT ?',
+          [contaId, limite]);
+      return linhas.map((l) => ({
+        id: l.id, quando: l.quando, usuarioId: l.usuario_id, usuarioNome: l.usuario_nome,
+        colecao: l.colecao, registroId: l.registro_id, acao: l.acao, detalhe: l.detalhe,
+      }));
+    },
+
+    async configuracoes(contaId) {
+      const l = await uma('SELECT valor FROM configuracoes WHERE conta_id = ? AND chave = ?',
+        [contaId, 'geral']);
+      return l ? JSON.parse(l.valor) : null;
+    },
+    async salvarConfiguracoes(contaId, valor) {
+      await consultar(`INSERT INTO configuracoes (conta_id, chave, valor) VALUES (?, 'geral', ?)
+        ON CONFLICT (conta_id, chave) DO UPDATE SET valor = excluded.valor`,
+      [contaId, JSON.stringify(valor)]);
+      return valor;
+    },
+    fechar() {},
+  };
+}
+
 function abrirJson() {
   const arquivo = join(config.dadosDir, 'sentinela.json');
   const vazio = { contas: {}, registros: {}, credenciais: {}, auditoria: [],
@@ -352,8 +539,20 @@ function abrirJson() {
   };
 }
 
+/**
+ * Escolhe onde os dados ficam.
+ *
+ * Havendo banco gerenciado configurado, é ele: a hospedagem passa a dispensar
+ * disco, que é o que impede usar plano sem armazenamento permanente. Sem ele,
+ * vale o SQLite em arquivo e, na falta dele, o arquivo JSON.
+ */
 export async function abrirBanco() {
   if (impl) return impl;
+  if (config.turso.url && config.turso.token) {
+    impl = await abrirTurso();
+    console.log('Persistência: turso (banco gerenciado)');
+    return impl;
+  }
   try {
     impl = await abrirSqlite();
   } catch (e) {

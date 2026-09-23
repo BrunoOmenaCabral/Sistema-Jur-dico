@@ -73,10 +73,10 @@ function lerCorpo(req) {
   });
 }
 
-const usuarioDaRequisicao = (req) => {
+const usuarioDaRequisicao = async (req) => {
   const carga = lerToken(lerCookies(req.headers.cookie)[NOME_COOKIE]);
   if (!carga?.contaId) return null;
-  const u = usuarioPorId(carga.contaId, carga.usuarioId);
+  const u = await usuarioPorId(carga.contaId, carga.usuarioId);
   return u && u.ativo !== false && !u.excluidoEm ? u : null;
 };
 
@@ -121,7 +121,7 @@ async function api(req, res, url) {
       return responder(res, 429, { erro: `Muitas tentativas. Tente novamente em ${espera} segundos.` });
     }
     try {
-      const usuario = autenticar(email, senha);
+      const usuario = await autenticar(email, senha);
       limparFalhas(chave);
       return responder(res, 200, { usuario },
         { 'Set-Cookie': cookieDeSessao(criarToken(usuario.id, usuario.contaId)) });
@@ -145,7 +145,7 @@ async function api(req, res, url) {
     if (espera) return responder(res, 429, { erro: `Aguarde ${espera} segundos para novo pedido.` });
     registrarFalha(chave);
 
-    const pedido = solicitarRecuperacao(email);
+    const pedido = await solicitarRecuperacao(email);
     // A resposta é a mesma exista ou não a conta, para não revelar quem tem acesso.
     const generica = { ok: true, mensagem: 'Se houver conta com este e-mail, as instruções de '
       + 'redefinição foram enviadas para ele.' };
@@ -173,13 +173,13 @@ async function api(req, res, url) {
     if (!origemConfiavel(req)) return responder(res, 403, { erro: 'Requisição não autorizada.' });
     const { token, senha } = await lerCorpo(req);
     try {
-      return responder(res, 200, redefinirComToken(token, senha));
+      return responder(res, 200, await redefinirComToken(token, senha));
     } catch (e) {
       return responder(res, e.status || 400, { erro: e.message });
     }
   }
 
-  const usuario = usuarioDaRequisicao(req);
+  const usuario = await usuarioDaRequisicao(req);
 
   if (rota === '/sessao' && metodo === 'GET') {
     return usuario
@@ -273,30 +273,30 @@ async function api(req, res, url) {
   if (rota === '/estado' && metodo === 'GET') {
     const desde = url.searchParams.get('desde');
     return responder(res, 200, desde
-      ? estadoDesde(usuario.contaId, desde) : estadoCompleto(usuario.contaId));
+      ? await estadoDesde(usuario.contaId, desde) : await estadoCompleto(usuario.contaId));
   }
 
   if (rota === '/mutacoes' && metodo === 'POST') {
     const { mutacoes } = await lerCorpo(req);
     if (!Array.isArray(mutacoes)) return responder(res, 400, { erro: 'Envie a lista de mutações.' });
     if (mutacoes.length > 500) return responder(res, 400, { erro: 'Lote acima de 500 operações.' });
-    return responder(res, 200, aplicarMutacoes(mutacoes, usuario));
+    return responder(res, 200, await aplicarMutacoes(mutacoes, usuario));
   }
 
   if (rota === '/configuracoes' && metodo === 'PUT') {
     const corpo = await lerCorpo(req);
-    return responder(res, 200, { configuracoes: salvarConfiguracoes(corpo, usuario) });
+    return responder(res, 200, { configuracoes: await salvarConfiguracoes(corpo, usuario) });
   }
 
   if (rota === '/usuarios' && metodo === 'POST') {
     if (usuario.perfil !== 'admin') return responder(res, 403, { erro: 'Restrito ao administrador.' });
-    return responder(res, 201, { usuario: criarUsuario(await lerCorpo(req), usuario) });
+    return responder(res, 201, { usuario: await criarUsuario(await lerCorpo(req), usuario) });
   }
 
   const acessoRota = rota.match(/^\/usuarios\/([\w-]+)\/acesso$/);
   if (acessoRota && metodo === 'PUT') {
     try {
-      return responder(res, 200, alterarAcesso(acessoRota[1], await lerCorpo(req), usuario));
+      return responder(res, 200, await alterarAcesso(acessoRota[1], await lerCorpo(req), usuario));
     } catch (e) {
       return responder(res, e.status || 400, { erro: e.message });
     }
@@ -309,7 +309,7 @@ async function api(req, res, url) {
       return responder(res, 403, { erro: 'Só o administrador altera a senha de outro usuário.' });
     }
     const { senha } = await lerCorpo(req);
-    return responder(res, 200, definirSenha(usuario.contaId, alvo, senha, usuario));
+    return responder(res, 200, await definirSenha(usuario.contaId, alvo, senha, usuario));
   }
 
   return responder(res, 404, { erro: 'Rota não encontrada.' });

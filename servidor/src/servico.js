@@ -32,8 +32,8 @@ export const publicarUsuario = (u) => {
  * É por ele que se descobre a conta de quem está entrando: o usuário não
  * informa a qual escritório pertence, o servidor é que sabe.
  */
-export function usuarioPorEmail(email) {
-  const acesso = banco.acessoPorEmail(email);
+export async function usuarioPorEmail(email) {
+  const acesso = await banco.acessoPorEmail(email);
   if (!acesso) return null;
   return banco.obter(acesso.contaId, 'usuarios', acesso.usuarioId);
 }
@@ -52,30 +52,30 @@ export async function criarConta({ nome, email, senha, escritorio = '' }) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim())) {
     throw new ErroDeUso('Informe um e-mail válido.');
   }
-  if (usuarioPorEmail(email)) throw new ErroDeUso('Já existe conta com este e-mail.', 409);
+  if (await usuarioPorEmail(email)) throw new ErroDeUso('Já existe conta com este e-mail.', 409);
 
   const contaId = `cta_${randomUUID().slice(0, 12)}`;
-  banco.criarConta(contaId, escritorio || nome);
+  await banco.criarConta(contaId, escritorio || nome);
 
   const { configuracoesPadrao } = await import('./padroes.js');
   const padrao = configuracoesPadrao();
-  bancoDa(contaId).salvarConfiguracoes({
+  await bancoDa(contaId).salvarConfiguracoes({
     ...padrao,
     escritorio: { ...padrao.escritorio, nome: escritorio || `Escritório de ${nome}`, email },
   });
 
-  const usuario = criarUsuario({ nome, email, senha, perfil: 'admin' }, null, contaId);
+  const usuario = await criarUsuario({ nome, email, senha, perfil: 'admin' }, null, contaId);
   return { contaId, usuario };
 }
 
-export function criarUsuario({ nome, email, senha, perfil = 'advogado', oab = '', permissoes = null },
+export async function criarUsuario({ nome, email, senha, perfil = 'advogado', oab = '', permissoes = null },
   autor = null, contaId = null) {
   const conta = contaId || autor?.contaId;
   if (!conta) throw new ErroDeUso('Operação sem conta definida.', 400);
   if (!nome || !email || !senha) throw new ErroDeUso('Informe nome, e-mail e senha.');
   if (String(senha).length < 8) throw new ErroDeUso('A senha deve ter ao menos 8 caracteres.');
   if (!PERFIS[perfil]) throw new ErroDeUso('Perfil inválido.');
-  if (usuarioPorEmail(email)) throw new ErroDeUso('Já existe usuário com este e-mail.');
+  if (await usuarioPorEmail(email)) throw new ErroDeUso('Já existe usuário com este e-mail.');
 
   const usuario = {
     id: `usu_${randomUUID().slice(0, 12)}`,
@@ -83,33 +83,33 @@ export function criarUsuario({ nome, email, senha, perfil = 'advogado', oab = ''
     nome, email: normalizar(email), perfil, oab, permissoes, ativo: true,
     criadoEm: agora(), criadoPor: autor?.id || null, atualizadoEm: agora(),
   };
-  bancoDa(conta).gravar('usuarios', usuario);
+  await bancoDa(conta).gravar('usuarios', usuario);
   const { hash, sal } = gerarHashSenha(senha);
-  banco.salvarCredencial(usuario.id, hash, sal);
-  auditarNaConta(conta, autor, 'usuarios', usuario.id, 'criou', `Usuário ${nome} criado`,
+  await banco.salvarCredencial(usuario.id, hash, sal);
+  await auditarNaConta(conta, autor, 'usuarios', usuario.id, 'criou', `Usuário ${nome} criado`,
     null, publicarUsuario(usuario));
   return publicarUsuario(usuario);
 }
 
-export function definirSenha(contaId, usuarioId, senha, autor = null) {
+export async function definirSenha(contaId, usuarioId, senha, autor = null) {
   if (String(senha || '').length < 8) throw new ErroDeUso('A senha deve ter ao menos 8 caracteres.');
-  const u = usuarioPorId(contaId, usuarioId);
+  const u = await usuarioPorId(contaId, usuarioId);
   if (!u) throw new ErroDeUso('Usuário não encontrado.', 404);
   const { hash, sal } = gerarHashSenha(senha);
-  banco.salvarCredencial(usuarioId, hash, sal);
-  auditarNaConta(contaId, autor, 'usuarios', usuarioId, 'alterou', 'Senha alterada');
+  await banco.salvarCredencial(usuarioId, hash, sal);
+  await auditarNaConta(contaId, autor, 'usuarios', usuarioId, 'alterou', 'Senha alterada');
   return { ok: true };
 }
 
-export function autenticar(email, senha) {
-  const u = usuarioPorEmail(email);
+export async function autenticar(email, senha) {
+  const u = await usuarioPorEmail(email);
   if (!u || u.ativo === false || u.excluidoEm) throw new ErroDeUso('Credenciais inválidas.', 401);
-  const cred = banco.credencial(u.id);
+  const cred = await banco.credencial(u.id);
   if (!cred || !senhaConfere(senha, cred.hash, cred.sal)) throw new ErroDeUso('Credenciais inválidas.', 401);
   const bd = bancoDa(u.contaId);
-  bd.gravar('usuarios', { ...u, ultimoAcesso: agora(), atualizadoEm: agora() });
-  auditarNaConta(u.contaId, u, 'usuarios', u.id, 'acessou', 'Acesso ao sistema');
-  return publicarUsuario(bd.obter('usuarios', u.id));
+  await bd.gravar('usuarios', { ...u, ultimoAcesso: agora(), atualizadoEm: agora() });
+  await auditarNaConta(u.contaId, u, 'usuarios', u.id, 'acessou', 'Acesso ao sistema');
+  return publicarUsuario(await bd.obter('usuarios', u.id));
 }
 
 /**
@@ -119,8 +119,8 @@ export function autenticar(email, senha) {
  * esquecida em máquina alheia não sirva para tomar a conta. O administrador
  * altera o de terceiros sem ela, porque já responde por isso.
  */
-export function alterarAcesso(usuarioId, { email, senhaAtual, senhaNova }, autor) {
-  const u = usuarioPorId(autor.contaId, usuarioId);
+export async function alterarAcesso(usuarioId, { email, senhaAtual, senhaNova }, autor) {
+  const u = await usuarioPorId(autor.contaId, usuarioId);
   if (!u) throw new ErroDeUso('Usuário não encontrado.', 404);
 
   const proprio = autor?.id === usuarioId;
@@ -128,7 +128,7 @@ export function alterarAcesso(usuarioId, { email, senhaAtual, senhaNova }, autor
     throw new ErroDeUso('Só o administrador altera o acesso de outro usuário.', 403);
   }
   if (proprio) {
-    const cred = banco.credencial(usuarioId);
+    const cred = await banco.credencial(usuarioId);
     if (!cred || !senhaConfere(String(senhaAtual || ''), cred.hash, cred.sal)) {
       throw new ErroDeUso('Senha atual incorreta.', 401);
     }
@@ -136,19 +136,19 @@ export function alterarAcesso(usuarioId, { email, senhaAtual, senhaNova }, autor
 
   const mudancas = {};
   if (email && normalizar(email) !== normalizar(u.email)) {
-    const ocupado = usuarioPorEmail(email);
+    const ocupado = await usuarioPorEmail(email);
     if (ocupado && ocupado.id !== usuarioId) throw new ErroDeUso('Já existe usuário com este e-mail.');
     mudancas.email = normalizar(email);
   }
   if (Object.keys(mudancas).length) {
     const antes = publicarUsuario(u);
-    bancoDa(autor.contaId).gravar('usuarios', { ...u, ...mudancas, atualizadoEm: agora() });
-    auditar(autor, 'usuarios', usuarioId, 'alterou', 'E-mail de acesso alterado',
-      antes, publicarUsuario(bancoDa(autor.contaId).obter('usuarios', usuarioId)));
+    await bancoDa(autor.contaId).gravar('usuarios', { ...u, ...mudancas, atualizadoEm: agora() });
+    await auditar(autor, 'usuarios', usuarioId, 'alterou', 'E-mail de acesso alterado',
+      antes, publicarUsuario(await bancoDa(autor.contaId).obter('usuarios', usuarioId)));
   }
-  if (senhaNova) definirSenha(autor.contaId, usuarioId, senhaNova, autor);
+  if (senhaNova) await definirSenha(autor.contaId, usuarioId, senhaNova, autor);
 
-  return { usuario: publicarUsuario(bancoDa(autor.contaId).obter('usuarios', usuarioId)) };
+  return { usuario: publicarUsuario(await bancoDa(autor.contaId).obter('usuarios', usuarioId)) };
 }
 
 /* -------------------------------------------------------- recuperação ---- */
@@ -162,33 +162,33 @@ const resumoToken = (token) => createHash('sha256').update(token).digest('hex');
  * e-mail informado: dizer que o endereço não está cadastrado entregaria, a
  * qualquer curioso, a lista de quem trabalha no escritório.
  */
-export function solicitarRecuperacao(email) {
-  banco.limparRecuperacoesVencidas();
-  const u = usuarioPorEmail(email);
+export async function solicitarRecuperacao(email) {
+  await banco.limparRecuperacoesVencidas();
+  const u = await usuarioPorEmail(email);
   if (!u || u.ativo === false || u.excluidoEm) return { token: null, usuario: null };
 
   const token = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
   const expira = new Date(Date.now() + config.minutosRecuperacao * 60000).toISOString();
-  banco.salvarRecuperacao(resumoToken(token), u.id, u.contaId, expira);
-  auditar(u, 'usuarios', u.id, 'solicitou', 'Redefinição de senha solicitada');
+  await banco.salvarRecuperacao(resumoToken(token), u.id, u.contaId, expira);
+  await auditar(u, 'usuarios', u.id, 'solicitou', 'Redefinição de senha solicitada');
   return { token, usuario: publicarUsuario(u), expira };
 }
 
 /** Conclui a redefinição. O token vale uma vez e dentro do prazo. */
-export function redefinirComToken(token, senha) {
-  banco.limparRecuperacoesVencidas();
-  const pedido = banco.recuperacao(resumoToken(String(token || '')));
+export async function redefinirComToken(token, senha) {
+  await banco.limparRecuperacoesVencidas();
+  const pedido = await banco.recuperacao(resumoToken(String(token || '')));
   if (!pedido) throw new ErroDeUso('Link de redefinição inválido ou já utilizado.', 400);
   if (pedido.expira < agora()) {
-    banco.apagarRecuperacao(resumoToken(String(token)));
+    await banco.apagarRecuperacao(resumoToken(String(token)));
     throw new ErroDeUso('Link de redefinição expirado. Solicite outro.', 400);
   }
-  const u = pedido.contaId ? usuarioPorId(pedido.contaId, pedido.usuarioId) : null;
+  const u = pedido.contaId ? await usuarioPorId(pedido.contaId, pedido.usuarioId) : null;
   if (!u) throw new ErroDeUso('Usuário não encontrado.', 404);
 
-  definirSenha(u.contaId, pedido.usuarioId, senha, u);
-  banco.apagarRecuperacao(resumoToken(String(token)));
-  auditar(u, 'usuarios', u.id, 'alterou', 'Senha redefinida por link enviado ao e-mail');
+  await definirSenha(u.contaId, pedido.usuarioId, senha, u);
+  await banco.apagarRecuperacao(resumoToken(String(token)));
+  await auditar(u, 'usuarios', u.id, 'alterou', 'Senha redefinida por link enviado ao e-mail');
   return { ok: true, email: u.email };
 }
 
@@ -199,7 +199,7 @@ export function auditar(autor, colecao, registroId, acao, detalhe, antes = null,
 }
 
 /** A conta vai explícita quando o autor é o próprio sistema, sem usuário. */
-export function auditarNaConta(contaId, autor, colecao, registroId, acao, detalhe,
+export async function auditarNaConta(contaId, autor, colecao, registroId, acao, detalhe,
   antes = null, depois = null) {
   if (!contaId) return null;
   return bancoDa(contaId).registrarAuditoria({
@@ -217,43 +217,43 @@ function resumir(obj) {
 
 /* -------------------------------------------------------------- estado --- */
 
-export function estadoCompleto(contaId) {
+export async function estadoCompleto(contaId) {
   const bd = bancoDa(contaId);
   const colecoes = {};
   for (const c of COLECOES) {
-    const registros = bd.listar(c, { incluirExcluidos: true });
+    const registros = await bd.listar(c, { incluirExcluidos: true });
     colecoes[c] = c === 'usuarios' ? registros.map(publicarUsuario) : registros;
   }
   return {
     colecoes,
-    auditoria: bd.auditoria({ limite: 400 }),
-    configuracoes: bd.configuracoes(),
+    auditoria: await bd.auditoria({ limite: 400 }),
+    configuracoes: await bd.configuracoes(),
     servidor: { agora: agora(), persistencia: banco.tipo },
   };
 }
 
-export function estadoDesde(contaId, momento) {
+export async function estadoDesde(contaId, momento) {
   const bd = bancoDa(contaId);
-  const alterados = bd.alteradosDesde(momento);
+  const alterados = await bd.alteradosDesde(momento);
   const colecoes = {};
   for (const { colecao, registro } of alterados) {
     (colecoes[colecao] ||= []).push(colecao === 'usuarios' ? publicarUsuario(registro) : registro);
   }
   return {
     colecoes,
-    auditoria: bd.auditoria({ desde: momento, limite: 200 }),
+    auditoria: await bd.auditoria({ desde: momento, limite: 200 }),
     configuracoes: null,
     servidor: { agora: agora(), persistencia: banco.tipo },
   };
 }
 
-export function salvarConfiguracoes(valor, autor) {
+export async function salvarConfiguracoes(valor, autor) {
   if (!temPermissao(autor, 'configuracoes:ver')) throw new ErroDeUso('Sem permissão.', 403);
   const bd = bancoDa(autor.contaId);
-  const atual = bd.configuracoes() || {};
+  const atual = await bd.configuracoes() || {};
   const novo = { ...atual, ...valor };
-  bd.salvarConfiguracoes(novo);
-  auditar(autor, 'configuracoes', 'geral', 'alterou', 'Configurações do sistema');
+  await bd.salvarConfiguracoes(novo);
+  await auditar(autor, 'configuracoes', 'geral', 'alterou', 'Configurações do sistema');
   return novo;
 }
 
@@ -266,14 +266,14 @@ const CAMPOS_PROTEGIDOS = ['criadoEm', 'criadoPor', 'atualizadoEm', 'atualizadoP
  * Aplica um lote de gravações vindas do navegador. Cada item é validado,
  * autorizado e auditado individualmente: um item recusado não impede os demais.
  */
-export function aplicarMutacoes(mutacoes, autor) {
+export async function aplicarMutacoes(mutacoes, autor) {
   const aplicadas = [];
   const recusadas = [];
   const novaAuditoria = [];
 
   for (const m of mutacoes) {
     try {
-      const registro = aplicarUma(m, autor, novaAuditoria);
+      const registro = await aplicarUma(m, autor, novaAuditoria);
       aplicadas.push({ ref: m.ref || null, colecao: m.colecao, registro });
     } catch (e) {
       recusadas.push({ ref: m.ref || null, colecao: m.colecao, id: m.id || m.dados?.id || null,
@@ -283,7 +283,7 @@ export function aplicarMutacoes(mutacoes, autor) {
   return { aplicadas, recusadas, auditoria: novaAuditoria, servidor: { agora: agora() } };
 }
 
-function aplicarUma(m, autor, novaAuditoria) {
+async function aplicarUma(m, autor, novaAuditoria) {
   const bd = bancoDa(autor.contaId);
   const { op, colecao } = m;
   if (!COLECOES.includes(colecao)) throw new ErroDeUso(`Coleção desconhecida: ${colecao}.`);
@@ -297,50 +297,50 @@ function aplicarUma(m, autor, novaAuditoria) {
     throw new ErroDeUso('Use o cadastro de usuários para criar acessos.', 400);
   }
 
-  const registrar = (...args) => novaAuditoria.push(auditar(autor, ...args));
+  const registrar = async (...args) => novaAuditoria.push(await auditar(autor, ...args));
 
   if (op === 'inserir') {
     const dados = limpar(m.dados);
     if (!dados.id) throw new ErroDeUso('Registro sem identificador.');
-    if (bd.obter(colecao, dados.id)) throw new ErroDeUso('Registro já existente.', 409);
-    validarRegra(bd, colecao, dados, null);
+    if (await bd.obter(colecao, dados.id)) throw new ErroDeUso('Registro já existente.', 409);
+    await validarRegra(bd, colecao, dados, null);
     const registro = { ...dados, criadoEm: agora(), criadoPor: autor.id, atualizadoEm: agora() };
-    bd.gravar(colecao, registro);
-    registrar(colecao, registro.id, 'criou', m.detalhe, null, registro);
+    await bd.gravar(colecao, registro);
+    await registrar(colecao, registro.id, 'criou', m.detalhe, null, registro);
     return registro;
   }
 
-  const atual = bd.obter(colecao, m.id);
+  const atual = await bd.obter(colecao, m.id);
   if (!atual) throw new ErroDeUso('Registro não encontrado.', 404);
 
   if (op === 'atualizar') {
     const dados = limpar(m.dados);
-    validarRegra(bd, colecao, { ...atual, ...dados }, atual.id);
+    await validarRegra(bd, colecao, { ...atual, ...dados }, atual.id);
     const registro = { ...atual, ...dados, id: atual.id, atualizadoEm: agora(), atualizadoPor: autor.id };
-    bd.gravar(colecao, registro);
-    registrar(colecao, registro.id, 'alterou', m.detalhe || descreverMudancas(atual, dados), atual, registro);
+    await bd.gravar(colecao, registro);
+    await registrar(colecao, registro.id, 'alterou', m.detalhe || descreverMudancas(atual, dados), atual, registro);
     return registro;
   }
   if (op === 'remover') {
     const registro = { ...atual, excluidoEm: agora(), excluidoPor: autor.id,
       motivoExclusao: m.detalhe || null, atualizadoEm: agora() };
-    bd.gravar(colecao, registro);
-    registrar(colecao, registro.id, 'excluiu', m.detalhe, atual, null);
+    await bd.gravar(colecao, registro);
+    await registrar(colecao, registro.id, 'excluiu', m.detalhe, atual, null);
     return registro;
   }
   if (op === 'restaurar') {
     const { excluidoEm, excluidoPor, motivoExclusao, ...limpo } = atual;
     const registro = { ...limpo, atualizadoEm: agora(), atualizadoPor: autor.id };
-    bd.gravar(colecao, registro);
-    registrar(colecao, registro.id, 'restaurou', 'Registro recuperado da lixeira', null, registro);
+    await bd.gravar(colecao, registro);
+    await registrar(colecao, registro.id, 'restaurou', 'Registro recuperado da lixeira', null, registro);
     return registro;
   }
   // removerDefinitivo
   if (!temPermissao(autor, 'configuracoes:ver') && autor.perfil !== 'admin') {
     throw new ErroDeUso('Exclusão definitiva restrita ao administrador.', 403);
   }
-  bd.apagar(colecao, m.id);
-  registrar(colecao, m.id, 'excluiu definitivamente', 'Exclusão irreversível', atual, null);
+  await bd.apagar(colecao, m.id);
+  await registrar(colecao, m.id, 'excluiu definitivamente', 'Exclusão irreversível', atual, null);
   return { id: m.id, removidoDefinitivamente: true };
 }
 
@@ -351,11 +351,11 @@ const limpar = (dados = {}) => {
 };
 
 /** Regras que o servidor não delega ao navegador. */
-function validarRegra(bd, colecao, registro, idAtual) {
+async function validarRegra(bd, colecao, registro, idAtual) {
   if (colecao === 'processos') {
     const numero = soDigitos(registro.numeroCNJ);
     if (!numero) throw new ErroDeUso('Informe o número do processo.');
-    const duplicado = bd.listar('processos')
+    const duplicado = (await bd.listar('processos'))
       .find((p) => soDigitos(p.numeroCNJ) === numero && p.id !== idAtual);
     if (duplicado) {
       throw new ErroDeUso('Já existe processo ativo com este número CNJ.', 409);
@@ -391,7 +391,7 @@ function descreverMudancas(antes, mudancas) {
  * apenas para que exista alguém antes do primeiro cadastro.
  */
 export async function prepararBase() {
-  if (banco.contas().length) return null;
+  if ((await banco.contas()).length) return null;
 
   const senha = config.admin.senha || gerarSenhaInicial();
   const { usuario } = await criarConta({
