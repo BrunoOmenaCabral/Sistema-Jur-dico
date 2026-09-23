@@ -32,6 +32,9 @@ export const api = {
   },
 
   entrar: (email, senha) => requisicao('POST', '/sessao', { email, senha }),
+  // Cadastro da conta do escritório, com o primeiro acesso. A sessão já volta
+  // aberta no cookie da resposta.
+  criarConta: (dados) => requisicao('POST', '/contas', dados),
   sair: () => requisicao('DELETE', '/sessao'),
   sessao: () => requisicao('GET', '/sessao'),
   estado: (desde) => requisicao('GET', `/estado${desde ? `?desde=${encodeURIComponent(desde)}` : ''}`),

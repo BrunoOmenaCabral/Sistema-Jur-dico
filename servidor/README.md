@@ -154,6 +154,49 @@ sentinela.seuescritorio.adv.br {
 }
 ```
 
+## Contas
+
+Cada conta é um escritório, com dados próprios: processos, clientes, prazos,
+financeiro, configurações e auditoria de uma conta não aparecem em consulta
+alguma de outra. O isolamento está na camada de acesso ao banco — toda leitura
+e toda gravação exigem a conta —, e não na disciplina de quem escreve a
+consulta.
+
+O cadastro é autônomo: qualquer pessoa cria a própria conta pela tela de
+acesso, e com ela nasce o primeiro usuário, administrador daquele escritório.
+Usuários adicionais são criados de dentro da conta e pertencem a ela.
+
+O e-mail é único em todo o servidor e é por ele que se descobre a conta de quem
+entra. A sessão leva a conta assinada no próprio cookie.
+
+Esquecida a senha, informa-se apenas o e-mail: o servidor envia um link de
+redefinição que vale uma vez e por tempo limitado. Sem provedor de e-mail
+configurado, o link é registrado no console do servidor, para que ninguém fique
+trancado do lado de fora.
+
+## Hospedagem
+
+O servidor guarda os dados em disco e serve também a interface, de modo que
+tudo fica na mesma origem — é o que faz o cookie de sessão funcionar sem
+exceções de navegador.
+
+Há um `render.yaml` na raiz do repositório, pronto para o Render: serviço
+Docker, verificação de saúde em `/api/saude` e disco de 1 GB montado em
+`/dados`. Qualquer hospedagem com disco persistente serve igualmente (Fly.io,
+Railway, VPS); o que não serve é hospedagem apenas estática ou de funções sem
+disco, porque a base não sobreviveria ao reinício.
+
+Variáveis a definir na hospedagem:
+
+| Variável | Para quê |
+| --- | --- |
+| `SENTINELA_ENDERECO` | Endereço público, usado no link de redefinição de senha |
+| `SENTINELA_SEGREDO` | Assinatura das sessões; trocá-lo encerra todas |
+| `SENTINELA_EMAIL_ENDPOINT` | API de envio de e-mail (formato do Resend) |
+| `SENTINELA_EMAIL_CHAVE` | Credencial do provedor de e-mail |
+| `SENTINELA_EMAIL_REMETENTE` | Remetente verificado no provedor |
+| `SENTINELA_HTTPS` | `true` atrás de HTTPS, para o cookie ir marcado como seguro |
+
 **Docker:**
 
 ```bash

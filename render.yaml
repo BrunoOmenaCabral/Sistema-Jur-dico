@@ -1,0 +1,36 @@
+# Hospedagem do servidor do Jursistemy.
+#
+# O servidor guarda contas e dados em disco próprio, e serve também a interface:
+# tudo fica na mesma origem, que é o que faz o cookie de sessão funcionar sem
+# exceções de navegador. O disco é obrigatório — sem ele, cada reinício
+# apagaria a base.
+services:
+  - type: web
+    name: jursistemy
+    runtime: docker
+    dockerfilePath: ./servidor/Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /api/saude
+    disk:
+      name: dados
+      mountPath: /dados
+      sizeGB: 1
+    envVars:
+      - key: SENTINELA_DADOS
+        value: /dados
+      - key: SENTINELA_HTTPS
+        value: "true"
+      # Endereço público do serviço, usado no link de redefinição de senha.
+      - key: SENTINELA_ENDERECO
+        sync: false
+      # Provedor de e-mail (formato da API do Resend e compatíveis).
+      - key: SENTINELA_EMAIL_ENDPOINT
+        sync: false
+      - key: SENTINELA_EMAIL_CHAVE
+        sync: false
+      - key: SENTINELA_EMAIL_REMETENTE
+        sync: false
+      # Segredo de assinatura das sessões. Trocá-lo encerra todas as sessões.
+      - key: SENTINELA_SEGREDO
+        generateValue: true

@@ -13,6 +13,7 @@ import {
 import {
   autenticar, aplicarMutacoes, estadoCompleto, estadoDesde, salvarConfiguracoes,
   criarUsuario, definirSenha, usuarioPorId, publicarUsuario, prepararBase, ErroDeUso,
+  criarConta,
   alterarAcesso, solicitarRecuperacao, redefinirComToken,
 } from './servico.js';
 
@@ -74,8 +75,8 @@ function lerCorpo(req) {
 
 const usuarioDaRequisicao = (req) => {
   const carga = lerToken(lerCookies(req.headers.cookie)[NOME_COOKIE]);
-  if (!carga) return null;
-  const u = usuarioPorId(carga.usuarioId);
+  if (!carga?.contaId) return null;
+  const u = usuarioPorId(carga.contaId, carga.usuarioId);
   return u && u.ativo !== false && !u.excluidoEm ? u : null;
 };
 
@@ -91,6 +92,26 @@ async function api(req, res, url) {
     return responder(res, 200, { ok: true, servico: 'sentinela', versao: 1 });
   }
 
+  // Cadastro que qualquer pessoa faz sozinha: conta nova, com o seu primeiro
+  // acesso. É o que permite entrar de qualquer lugar, sem depender do navegador
+  // em que a conta foi criada.
+  if (rota === '/contas' && metodo === 'POST') {
+    if (!origemConfiavel(req)) return responder(res, 403, { erro: 'Requisição não autorizada.' });
+    const chave = `conta|${req.socket.remoteAddress}`;
+    const espera = bloqueado(chave);
+    if (espera) return responder(res, 429, { erro: `Aguarde ${espera} segundos para novo cadastro.` });
+    registrarFalha(chave);
+
+    try {
+      const { nome, email, senha, escritorio } = await lerCorpo(req);
+      const { contaId, usuario } = await criarConta({ nome, email, senha, escritorio });
+      return responder(res, 201, { usuario, conta: contaId },
+        { 'Set-Cookie': cookieDeSessao(criarToken(usuario.id, contaId)) });
+    } catch (e) {
+      return responder(res, e.status || 400, { erro: e.message });
+    }
+  }
+
   if (rota === '/sessao' && metodo === 'POST') {
     if (!origemConfiavel(req)) return responder(res, 403, { erro: 'Requisição não autorizada.' });
     const { email, senha } = await lerCorpo(req);
@@ -102,7 +123,8 @@ async function api(req, res, url) {
     try {
       const usuario = autenticar(email, senha);
       limparFalhas(chave);
-      return responder(res, 200, { usuario }, { 'Set-Cookie': cookieDeSessao(criarToken(usuario.id)) });
+      return responder(res, 200, { usuario },
+        { 'Set-Cookie': cookieDeSessao(criarToken(usuario.id, usuario.contaId)) });
     } catch (e) {
       registrarFalha(chave);
       return responder(res, e.status || 401, { erro: e.message });
@@ -250,7 +272,8 @@ async function api(req, res, url) {
 
   if (rota === '/estado' && metodo === 'GET') {
     const desde = url.searchParams.get('desde');
-    return responder(res, 200, desde ? estadoDesde(desde) : estadoCompleto());
+    return responder(res, 200, desde
+      ? estadoDesde(usuario.contaId, desde) : estadoCompleto(usuario.contaId));
   }
 
   if (rota === '/mutacoes' && metodo === 'POST') {
@@ -286,7 +309,7 @@ async function api(req, res, url) {
       return responder(res, 403, { erro: 'Só o administrador altera a senha de outro usuário.' });
     }
     const { senha } = await lerCorpo(req);
-    return responder(res, 200, definirSenha(alvo, senha, usuario));
+    return responder(res, 200, definirSenha(usuario.contaId, alvo, senha, usuario));
   }
 
   return responder(res, 404, { erro: 'Rota não encontrada.' });

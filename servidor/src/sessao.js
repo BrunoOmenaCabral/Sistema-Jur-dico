@@ -23,9 +23,12 @@ export function senhaConfere(senha, hash, sal) {
 
 const assinar = (texto) => createHmac('sha256', segredo).update(texto).digest('base64url');
 
-export function criarToken(usuarioId) {
+export function criarToken(usuarioId, contaId) {
   const carga = JSON.stringify({
     usuarioId,
+    // A conta viaja assinada no próprio cookie: sem ela não se chega a dado
+    // algum, e trocá-la exigiria forjar a assinatura.
+    contaId,
     expira: Date.now() + config.duracaoSessaoHoras * 3600 * 1000,
     nonce: randomBytes(8).toString('base64url'),
   });

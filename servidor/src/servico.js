@@ -2,7 +2,7 @@
 // auditoria e montagem do estado enviado ao navegador.
 
 import { randomUUID, createHash } from 'node:crypto';
-import { banco, COLECOES } from './banco.js';
+import { banco, bancoDa, COLECOES, CONTA_INICIAL } from './banco.js';
 import { config } from './config.js';
 import { gerarHashSenha, senhaConfere } from './sessao.js';
 import {
@@ -26,14 +26,52 @@ export const publicarUsuario = (u) => {
   return limpo;
 };
 
-export const usuarioPorEmail = (email) =>
-  banco.listar('usuarios', { incluirExcluidos: true })
-    .find((u) => normalizar(u.email) === normalizar(email)) || null;
+/**
+ * Acesso pelo e-mail, que é único em todo o servidor.
+ *
+ * É por ele que se descobre a conta de quem está entrando: o usuário não
+ * informa a qual escritório pertence, o servidor é que sabe.
+ */
+export function usuarioPorEmail(email) {
+  const acesso = banco.acessoPorEmail(email);
+  if (!acesso) return null;
+  return banco.obter(acesso.contaId, 'usuarios', acesso.usuarioId);
+}
 
-export const usuarioPorId = (id) => banco.obter('usuarios', id);
+export const usuarioPorId = (contaId, id) => bancoDa(contaId).obter('usuarios', id);
+
+/**
+ * Cria a conta do escritório com o seu primeiro acesso.
+ *
+ * É o cadastro que qualquer pessoa faz sozinha: conta nova, usuário
+ * administrador e configurações próprias. Nada é compartilhado com outra conta.
+ */
+export async function criarConta({ nome, email, senha, escritorio = '' }) {
+  if (!nome || !email || !senha) throw new ErroDeUso('Informe nome, e-mail e senha.');
+  if (String(senha).length < 8) throw new ErroDeUso('A senha deve ter ao menos 8 caracteres.');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim())) {
+    throw new ErroDeUso('Informe um e-mail válido.');
+  }
+  if (usuarioPorEmail(email)) throw new ErroDeUso('Já existe conta com este e-mail.', 409);
+
+  const contaId = `cta_${randomUUID().slice(0, 12)}`;
+  banco.criarConta(contaId, escritorio || nome);
+
+  const { configuracoesPadrao } = await import('./padroes.js');
+  const padrao = configuracoesPadrao();
+  bancoDa(contaId).salvarConfiguracoes({
+    ...padrao,
+    escritorio: { ...padrao.escritorio, nome: escritorio || `Escritório de ${nome}`, email },
+  });
+
+  const usuario = criarUsuario({ nome, email, senha, perfil: 'admin' }, null, contaId);
+  return { contaId, usuario };
+}
 
 export function criarUsuario({ nome, email, senha, perfil = 'advogado', oab = '', permissoes = null },
-  autor = null) {
+  autor = null, contaId = null) {
+  const conta = contaId || autor?.contaId;
+  if (!conta) throw new ErroDeUso('Operação sem conta definida.', 400);
   if (!nome || !email || !senha) throw new ErroDeUso('Informe nome, e-mail e senha.');
   if (String(senha).length < 8) throw new ErroDeUso('A senha deve ter ao menos 8 caracteres.');
   if (!PERFIS[perfil]) throw new ErroDeUso('Perfil inválido.');
@@ -41,23 +79,25 @@ export function criarUsuario({ nome, email, senha, perfil = 'advogado', oab = ''
 
   const usuario = {
     id: `usu_${randomUUID().slice(0, 12)}`,
+    contaId: conta,
     nome, email: normalizar(email), perfil, oab, permissoes, ativo: true,
     criadoEm: agora(), criadoPor: autor?.id || null, atualizadoEm: agora(),
   };
-  banco.gravar('usuarios', usuario);
+  bancoDa(conta).gravar('usuarios', usuario);
   const { hash, sal } = gerarHashSenha(senha);
   banco.salvarCredencial(usuario.id, hash, sal);
-  auditar(autor, 'usuarios', usuario.id, 'criou', `Usuário ${nome} criado`, null, publicarUsuario(usuario));
+  auditarNaConta(conta, autor, 'usuarios', usuario.id, 'criou', `Usuário ${nome} criado`,
+    null, publicarUsuario(usuario));
   return publicarUsuario(usuario);
 }
 
-export function definirSenha(usuarioId, senha, autor = null) {
+export function definirSenha(contaId, usuarioId, senha, autor = null) {
   if (String(senha || '').length < 8) throw new ErroDeUso('A senha deve ter ao menos 8 caracteres.');
-  const u = usuarioPorId(usuarioId);
+  const u = usuarioPorId(contaId, usuarioId);
   if (!u) throw new ErroDeUso('Usuário não encontrado.', 404);
   const { hash, sal } = gerarHashSenha(senha);
   banco.salvarCredencial(usuarioId, hash, sal);
-  auditar(autor, 'usuarios', usuarioId, 'alterou', 'Senha alterada');
+  auditarNaConta(contaId, autor, 'usuarios', usuarioId, 'alterou', 'Senha alterada');
   return { ok: true };
 }
 
@@ -66,9 +106,10 @@ export function autenticar(email, senha) {
   if (!u || u.ativo === false || u.excluidoEm) throw new ErroDeUso('Credenciais inválidas.', 401);
   const cred = banco.credencial(u.id);
   if (!cred || !senhaConfere(senha, cred.hash, cred.sal)) throw new ErroDeUso('Credenciais inválidas.', 401);
-  banco.gravar('usuarios', { ...u, ultimoAcesso: agora(), atualizadoEm: agora() });
-  auditar(u, 'usuarios', u.id, 'acessou', 'Acesso ao sistema');
-  return publicarUsuario(banco.obter('usuarios', u.id));
+  const bd = bancoDa(u.contaId);
+  bd.gravar('usuarios', { ...u, ultimoAcesso: agora(), atualizadoEm: agora() });
+  auditarNaConta(u.contaId, u, 'usuarios', u.id, 'acessou', 'Acesso ao sistema');
+  return publicarUsuario(bd.obter('usuarios', u.id));
 }
 
 /**
@@ -79,7 +120,7 @@ export function autenticar(email, senha) {
  * altera o de terceiros sem ela, porque já responde por isso.
  */
 export function alterarAcesso(usuarioId, { email, senhaAtual, senhaNova }, autor) {
-  const u = usuarioPorId(usuarioId);
+  const u = usuarioPorId(autor.contaId, usuarioId);
   if (!u) throw new ErroDeUso('Usuário não encontrado.', 404);
 
   const proprio = autor?.id === usuarioId;
@@ -101,13 +142,13 @@ export function alterarAcesso(usuarioId, { email, senhaAtual, senhaNova }, autor
   }
   if (Object.keys(mudancas).length) {
     const antes = publicarUsuario(u);
-    banco.gravar('usuarios', { ...u, ...mudancas, atualizadoEm: agora() });
+    bancoDa(autor.contaId).gravar('usuarios', { ...u, ...mudancas, atualizadoEm: agora() });
     auditar(autor, 'usuarios', usuarioId, 'alterou', 'E-mail de acesso alterado',
-      antes, publicarUsuario(banco.obter('usuarios', usuarioId)));
+      antes, publicarUsuario(bancoDa(autor.contaId).obter('usuarios', usuarioId)));
   }
-  if (senhaNova) definirSenha(usuarioId, senhaNova, autor);
+  if (senhaNova) definirSenha(autor.contaId, usuarioId, senhaNova, autor);
 
-  return { usuario: publicarUsuario(banco.obter('usuarios', usuarioId)) };
+  return { usuario: publicarUsuario(bancoDa(autor.contaId).obter('usuarios', usuarioId)) };
 }
 
 /* -------------------------------------------------------- recuperação ---- */
@@ -128,7 +169,7 @@ export function solicitarRecuperacao(email) {
 
   const token = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
   const expira = new Date(Date.now() + config.minutosRecuperacao * 60000).toISOString();
-  banco.salvarRecuperacao(resumoToken(token), u.id, expira);
+  banco.salvarRecuperacao(resumoToken(token), u.id, u.contaId, expira);
   auditar(u, 'usuarios', u.id, 'solicitou', 'Redefinição de senha solicitada');
   return { token, usuario: publicarUsuario(u), expira };
 }
@@ -142,10 +183,10 @@ export function redefinirComToken(token, senha) {
     banco.apagarRecuperacao(resumoToken(String(token)));
     throw new ErroDeUso('Link de redefinição expirado. Solicite outro.', 400);
   }
-  const u = usuarioPorId(pedido.usuarioId);
+  const u = pedido.contaId ? usuarioPorId(pedido.contaId, pedido.usuarioId) : null;
   if (!u) throw new ErroDeUso('Usuário não encontrado.', 404);
 
-  definirSenha(pedido.usuarioId, senha, u);
+  definirSenha(u.contaId, pedido.usuarioId, senha, u);
   banco.apagarRecuperacao(resumoToken(String(token)));
   auditar(u, 'usuarios', u.id, 'alterou', 'Senha redefinida por link enviado ao e-mail');
   return { ok: true, email: u.email };
@@ -154,7 +195,14 @@ export function redefinirComToken(token, senha) {
 /* ------------------------------------------------------------ auditoria -- */
 
 export function auditar(autor, colecao, registroId, acao, detalhe, antes = null, depois = null) {
-  return banco.registrarAuditoria({
+  return auditarNaConta(autor?.contaId, autor, colecao, registroId, acao, detalhe, antes, depois);
+}
+
+/** A conta vai explícita quando o autor é o próprio sistema, sem usuário. */
+export function auditarNaConta(contaId, autor, colecao, registroId, acao, detalhe,
+  antes = null, depois = null) {
+  if (!contaId) return null;
+  return bancoDa(contaId).registrarAuditoria({
     id: `aud_${randomUUID()}`, quando: agora(),
     usuarioId: autor?.id || null, usuarioNome: autor?.nome || 'Sistema',
     colecao, registroId, acao, detalhe, antes: resumir(antes), depois: resumir(depois),
@@ -169,29 +217,31 @@ function resumir(obj) {
 
 /* -------------------------------------------------------------- estado --- */
 
-export function estadoCompleto() {
+export function estadoCompleto(contaId) {
+  const bd = bancoDa(contaId);
   const colecoes = {};
   for (const c of COLECOES) {
-    const registros = banco.listar(c, { incluirExcluidos: true });
+    const registros = bd.listar(c, { incluirExcluidos: true });
     colecoes[c] = c === 'usuarios' ? registros.map(publicarUsuario) : registros;
   }
   return {
     colecoes,
-    auditoria: banco.auditoria({ limite: 400 }),
-    configuracoes: banco.configuracoes(),
+    auditoria: bd.auditoria({ limite: 400 }),
+    configuracoes: bd.configuracoes(),
     servidor: { agora: agora(), persistencia: banco.tipo },
   };
 }
 
-export function estadoDesde(momento) {
-  const alterados = banco.alteradosDesde(momento);
+export function estadoDesde(contaId, momento) {
+  const bd = bancoDa(contaId);
+  const alterados = bd.alteradosDesde(momento);
   const colecoes = {};
   for (const { colecao, registro } of alterados) {
     (colecoes[colecao] ||= []).push(colecao === 'usuarios' ? publicarUsuario(registro) : registro);
   }
   return {
     colecoes,
-    auditoria: banco.auditoria({ desde: momento, limite: 200 }),
+    auditoria: bd.auditoria({ desde: momento, limite: 200 }),
     configuracoes: null,
     servidor: { agora: agora(), persistencia: banco.tipo },
   };
@@ -199,9 +249,10 @@ export function estadoDesde(momento) {
 
 export function salvarConfiguracoes(valor, autor) {
   if (!temPermissao(autor, 'configuracoes:ver')) throw new ErroDeUso('Sem permissão.', 403);
-  const atual = banco.configuracoes() || {};
+  const bd = bancoDa(autor.contaId);
+  const atual = bd.configuracoes() || {};
   const novo = { ...atual, ...valor };
-  banco.salvarConfiguracoes(novo);
+  bd.salvarConfiguracoes(novo);
   auditar(autor, 'configuracoes', 'geral', 'alterou', 'Configurações do sistema');
   return novo;
 }
@@ -233,6 +284,7 @@ export function aplicarMutacoes(mutacoes, autor) {
 }
 
 function aplicarUma(m, autor, novaAuditoria) {
+  const bd = bancoDa(autor.contaId);
   const { op, colecao } = m;
   if (!COLECOES.includes(colecao)) throw new ErroDeUso(`Coleção desconhecida: ${colecao}.`);
   if (!ACAO_DA_OPERACAO[op]) throw new ErroDeUso(`Operação desconhecida: ${op}.`);
@@ -250,36 +302,36 @@ function aplicarUma(m, autor, novaAuditoria) {
   if (op === 'inserir') {
     const dados = limpar(m.dados);
     if (!dados.id) throw new ErroDeUso('Registro sem identificador.');
-    if (banco.obter(colecao, dados.id)) throw new ErroDeUso('Registro já existente.', 409);
-    validarRegra(colecao, dados, null);
+    if (bd.obter(colecao, dados.id)) throw new ErroDeUso('Registro já existente.', 409);
+    validarRegra(bd, colecao, dados, null);
     const registro = { ...dados, criadoEm: agora(), criadoPor: autor.id, atualizadoEm: agora() };
-    banco.gravar(colecao, registro);
+    bd.gravar(colecao, registro);
     registrar(colecao, registro.id, 'criou', m.detalhe, null, registro);
     return registro;
   }
 
-  const atual = banco.obter(colecao, m.id);
+  const atual = bd.obter(colecao, m.id);
   if (!atual) throw new ErroDeUso('Registro não encontrado.', 404);
 
   if (op === 'atualizar') {
     const dados = limpar(m.dados);
-    validarRegra(colecao, { ...atual, ...dados }, atual.id);
+    validarRegra(bd, colecao, { ...atual, ...dados }, atual.id);
     const registro = { ...atual, ...dados, id: atual.id, atualizadoEm: agora(), atualizadoPor: autor.id };
-    banco.gravar(colecao, registro);
+    bd.gravar(colecao, registro);
     registrar(colecao, registro.id, 'alterou', m.detalhe || descreverMudancas(atual, dados), atual, registro);
     return registro;
   }
   if (op === 'remover') {
     const registro = { ...atual, excluidoEm: agora(), excluidoPor: autor.id,
       motivoExclusao: m.detalhe || null, atualizadoEm: agora() };
-    banco.gravar(colecao, registro);
+    bd.gravar(colecao, registro);
     registrar(colecao, registro.id, 'excluiu', m.detalhe, atual, null);
     return registro;
   }
   if (op === 'restaurar') {
     const { excluidoEm, excluidoPor, motivoExclusao, ...limpo } = atual;
     const registro = { ...limpo, atualizadoEm: agora(), atualizadoPor: autor.id };
-    banco.gravar(colecao, registro);
+    bd.gravar(colecao, registro);
     registrar(colecao, registro.id, 'restaurou', 'Registro recuperado da lixeira', null, registro);
     return registro;
   }
@@ -287,7 +339,7 @@ function aplicarUma(m, autor, novaAuditoria) {
   if (!temPermissao(autor, 'configuracoes:ver') && autor.perfil !== 'admin') {
     throw new ErroDeUso('Exclusão definitiva restrita ao administrador.', 403);
   }
-  banco.apagar(colecao, m.id);
+  bd.apagar(colecao, m.id);
   registrar(colecao, m.id, 'excluiu definitivamente', 'Exclusão irreversível', atual, null);
   return { id: m.id, removidoDefinitivamente: true };
 }
@@ -299,11 +351,11 @@ const limpar = (dados = {}) => {
 };
 
 /** Regras que o servidor não delega ao navegador. */
-function validarRegra(colecao, registro, idAtual) {
+function validarRegra(bd, colecao, registro, idAtual) {
   if (colecao === 'processos') {
     const numero = soDigitos(registro.numeroCNJ);
     if (!numero) throw new ErroDeUso('Informe o número do processo.');
-    const duplicado = banco.listar('processos')
+    const duplicado = bd.listar('processos')
       .find((p) => soDigitos(p.numeroCNJ) === numero && p.id !== idAtual);
     if (duplicado) {
       throw new ErroDeUso('Já existe processo ativo com este número CNJ.', 409);
@@ -313,7 +365,8 @@ function validarRegra(colecao, registro, idAtual) {
     throw new ErroDeUso('Prazo sem data de vencimento.');
   }
   if (colecao === 'usuarios') {
-    const permitidos = ['nome', 'perfil', 'oab', 'permissoes', 'ativo', 'ultimoAcesso', 'email', 'id'];
+    const permitidos = ['nome', 'perfil', 'oab', 'permissoes', 'ativo', 'ultimoAcesso',
+      'email', 'id', 'contaId'];
     for (const chave of Object.keys(registro)) {
       if (!permitidos.includes(chave) && !CAMPOS_PROTEGIDOS.includes(chave)) {
         throw new ErroDeUso(`Campo não editável em usuários: ${chave}.`);
@@ -330,16 +383,21 @@ function descreverMudancas(antes, mudancas) {
 
 /* -------------------------------------------------- inicialização base --- */
 
+/**
+ * Primeiro acesso do servidor.
+ *
+ * Havendo qualquer conta, nada se faz: as contas passam a nascer do cadastro de
+ * quem usa. O administrador inicial só é criado em servidor recém-instalado, e
+ * apenas para que exista alguém antes do primeiro cadastro.
+ */
 export async function prepararBase() {
-  if (!banco.configuracoes()) {
-    const { configuracoesPadrao } = await import('./padroes.js');
-    banco.salvarConfiguracoes(configuracoesPadrao());
-  }
-  if (banco.listar('usuarios', { incluirExcluidos: true }).length) return null;
+  if (banco.contas().length) return null;
 
   const senha = config.admin.senha || gerarSenhaInicial();
-  criarUsuario({ nome: config.admin.nome, email: config.admin.email, senha, perfil: 'admin' });
-  return { email: config.admin.email, senha, gerada: !config.admin.senha };
+  const { usuario } = await criarConta({
+    nome: config.admin.nome, email: config.admin.email, senha, escritorio: 'Escritório',
+  });
+  return { email: usuario.email, senha, gerada: !config.admin.senha };
 }
 
 function gerarSenhaInicial() {

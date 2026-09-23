@@ -20,10 +20,10 @@ export function telaLogin(aoEntrar) {
         <span>${esc(ASSINATURA)}</span>
       </div>
 
-      ${servidor ? '' : `<div class="abas abas--login">
+      <div class="abas abas--login">
         <div class="aba ${baseVazia ? '' : 'ativa'}" data-modo="entrar">Entrar</div>
         <div class="aba ${baseVazia ? 'ativa' : ''}" data-modo="criar">Criar conta</div>
-      </div>`}
+      </div>
 
       <div id="erro"></div>
       <div class="form" id="campos"></div>
@@ -54,7 +54,10 @@ export function telaLogin(aoEntrar) {
         <input id="senha" type="password" autocomplete="new-password" required>
         <span class="campo__ajuda">Mínimo de 8 caracteres.</span></div>
       <div class="campo"><label for="senha2">Repita a senha</label>
-        <input id="senha2" type="password" autocomplete="new-password" required></div>`,
+        <input id="senha2" type="password" autocomplete="new-password" required></div>
+      ${servidor ? `<div class="campo"><label for="escritorio">Nome do escritório
+        <span class="mudo">(opcional)</span></label>
+        <input id="escritorio" type="text" placeholder="Como aparecerá nos documentos"></div>` : ''}`,
     recuperar: servidor ? `
       <div class="campo"><label for="email">E-mail da conta</label>
         <input id="email" type="email" autocomplete="username" required>
@@ -71,10 +74,13 @@ export function telaLogin(aoEntrar) {
 
   const RODAPE = {
     entrar: servidor
-      ? 'Acesso restrito aos usuários cadastrados pelo administrador do escritório.'
+      ? 'A conta vale em qualquer dispositivo: entre com o e-mail e a senha cadastrados.'
       : 'Informe as credenciais da conta criada neste navegador.',
-    criar: 'A conta e os dados ficam neste navegador, sob seu controle exclusivo. '
-      + 'Nada é enviado a servidor algum.',
+    criar: servidor
+      ? 'A conta e os dados ficam no servidor do sistema, acessíveis de qualquer lugar. '
+        + 'Esquecendo a senha, a redefinição é enviada ao e-mail informado.'
+      : 'A conta e os dados ficam neste navegador, sob seu controle exclusivo. '
+        + 'Nada é enviado a servidor algum.',
     recuperar: servidor
       ? 'O link vale por tempo limitado e só pode ser usado uma vez.'
       : 'Sem servidor não há e-mail a enviar: a redefinição usa o código guardado por você.',
@@ -117,6 +123,7 @@ export function telaLogin(aoEntrar) {
           email: qs('#email', tela).value,
           senha,
           oab: qs('#oab', tela).value,
+          escritorio: qs('#escritorio', tela)?.value || '',
         });
         db.backupAutomatico();
         if (conta.codigoRecuperacao) await mostrarCodigo(conta.codigoRecuperacao);

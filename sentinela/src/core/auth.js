@@ -46,11 +46,22 @@ export async function criarUsuario({ nome, email, senha, perfil = 'advogado', oa
  * cadastro continua sendo ato do administrador, que responde pelo acesso de
  * cada pessoa aos processos do escritório.
  */
-export async function registrarConta({ nome, email, senha, oab = '' }) {
-  if (modoAtual() === 'servidor') {
-    throw new Error('Neste servidor as contas são criadas pelo administrador do escritório.');
-  }
+export async function registrarConta({ nome, email, senha, oab = '', escritorio = '' }) {
   const limpo = String(email || '').trim().toLowerCase();
+
+  // Com servidor, a conta vive nele: o acesso passa a valer de qualquer
+  // dispositivo, e a redefinição de senha vai por e-mail.
+  if (modoAtual() === 'servidor') {
+    if (!String(nome || '').trim()) throw new Error('Informe o nome completo.');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(limpo)) throw new Error('Informe um e-mail válido.');
+    if (String(senha || '').length < 8) throw new Error('A senha deve ter ao menos 8 caracteres.');
+    const r = await api.criarConta({ nome: String(nome).trim(), email: limpo, senha, escritorio });
+    sessao.definir({ usuarioId: r.usuario.id, nome: r.usuario.nome, perfil: r.usuario.perfil,
+      em: new Date().toISOString() });
+    // Sem código de recuperação: com servidor, a redefinição vai por e-mail.
+    return { ...r.usuario, codigoRecuperacao: null };
+  }
+
   if (!String(nome || '').trim()) throw new Error('Informe o nome completo.');
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(limpo)) throw new Error('Informe um e-mail válido.');
   if (String(senha || '').length < 8) throw new Error('A senha deve ter ao menos 8 caracteres.');

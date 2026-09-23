@@ -461,6 +461,134 @@ await teste('encerrar sessão invalida o acesso', async () => {
   assert.equal((await admin.req('GET', '/api/estado')).status, 401);
 });
 
+console.log('\nContas independentes');
+
+// Duas contas criadas do zero, como duas pessoas se cadastrando no sistema.
+const contaA = criarCliente();
+const contaB = criarCliente();
+let dadosA = null;
+let dadosB = null;
+
+await teste('qualquer pessoa cria a própria conta e já entra', async () => {
+  const r = await contaA.req('POST', '/api/contas', {
+    nome: 'Bruno Omena', email: 'bruno@escritorio-a.adv.br', senha: 'senhaforte123',
+    escritorio: 'Omena Advocacia',
+  });
+  assert.equal(r.status, 201);
+  assert.equal(r.dados.usuario.perfil, 'admin');
+  assert.ok(r.dados.conta);
+  dadosA = r.dados;
+  // A sessão já vem aberta: o cadastro não obriga a entrar de novo.
+  assert.equal((await contaA.req('GET', '/api/sessao')).status, 200);
+});
+await teste('a segunda conta nasce separada da primeira', async () => {
+  const r = await contaB.req('POST', '/api/contas', {
+    nome: 'Outro Advogado', email: 'outro@escritorio-b.adv.br', senha: 'senhaforte123',
+    escritorio: 'Outro Escritório',
+  });
+  assert.equal(r.status, 201);
+  dadosB = r.dados;
+  assert.notEqual(dadosB.conta, dadosA.conta);
+});
+await teste('o mesmo e-mail não abre duas contas', async () => {
+  const r = await criarCliente().req('POST', '/api/contas', {
+    nome: 'Repetido', email: 'bruno@escritorio-a.adv.br', senha: 'senhaforte123',
+  });
+  assert.equal(r.status, 409);
+  assert.match(r.dados.erro, /Já existe conta/);
+});
+await teste('senha curta é recusada no cadastro', async () => {
+  const r = await criarCliente().req('POST', '/api/contas', {
+    nome: 'Curto', email: 'curto@exemplo.br', senha: '123',
+  });
+  assert.equal(r.status, 400);
+  assert.match(r.dados.erro, /8 caracteres/);
+});
+
+await teste('cada conta só enxerga os próprios dados', async () => {
+  const processoA = { id: uid('prc'), numeroCNJ: '00002020420268170001', clienteId: null,
+    status: 'ativo', assunto: 'Processo da conta A' };
+  const processoB = { id: uid('prc'), numeroCNJ: '00003030520268170001', clienteId: null,
+    status: 'ativo', assunto: 'Processo da conta B' };
+  assert.equal((await contaA.req('POST', '/api/mutacoes', { mutacoes: [
+    { op: 'inserir', colecao: 'processos', dados: processoA }] })).dados.aplicadas.length, 1);
+  assert.equal((await contaB.req('POST', '/api/mutacoes', { mutacoes: [
+    { op: 'inserir', colecao: 'processos', dados: processoB }] })).dados.aplicadas.length, 1);
+
+  const deA = (await contaA.req('GET', '/api/estado')).dados.colecoes.processos;
+  const deB = (await contaB.req('GET', '/api/estado')).dados.colecoes.processos;
+  assert.deepEqual(deA.map((p) => p.assunto), ['Processo da conta A']);
+  assert.deepEqual(deB.map((p) => p.assunto), ['Processo da conta B']);
+});
+await teste('o número CNJ de uma conta não bloqueia o da outra', async () => {
+  // Duplicidade é impedimento dentro da conta, não entre escritórios distintos.
+  const mesmo = { id: uid('prc'), numeroCNJ: '00002020420268170001', clienteId: null,
+    status: 'ativo', assunto: 'Mesmo número, outro escritório' };
+  const r = await contaB.req('POST', '/api/mutacoes', { mutacoes: [
+    { op: 'inserir', colecao: 'processos', dados: mesmo }] });
+  assert.equal(r.dados.aplicadas.length, 1, JSON.stringify(r.dados.recusadas));
+
+  const repetido = { id: uid('prc'), numeroCNJ: '00002020420268170001', clienteId: null,
+    status: 'ativo', assunto: 'Repetido na mesma conta' };
+  const r2 = await contaA.req('POST', '/api/mutacoes', { mutacoes: [
+    { op: 'inserir', colecao: 'processos', dados: repetido }] });
+  assert.equal(r2.dados.recusadas.length, 1);
+  assert.equal(r2.dados.recusadas[0].status, 409);
+});
+await teste('registro de uma conta não é alcançável pelo id a partir de outra', async () => {
+  const daA = (await contaA.req('GET', '/api/estado')).dados.colecoes.processos[0];
+  const r = await contaB.req('POST', '/api/mutacoes', { mutacoes: [
+    { op: 'atualizar', colecao: 'processos', id: daA.id, dados: { assunto: 'invadido' } }] });
+  assert.equal(r.dados.recusadas.length, 1);
+  assert.equal(r.dados.recusadas[0].status, 404);
+  const conferir = (await contaA.req('GET', '/api/estado')).dados.colecoes.processos
+    .find((p) => p.id === daA.id);
+  assert.equal(conferir.assunto, 'Processo da conta A');
+});
+await teste('configurações e auditoria também não se misturam', async () => {
+  await contaA.req('PUT', '/api/configuracoes', { escritorio: { nome: 'Omena Advocacia' } });
+  const cfgA = (await contaA.req('GET', '/api/estado')).dados.configuracoes;
+  const cfgB = (await contaB.req('GET', '/api/estado')).dados.configuracoes;
+  assert.equal(cfgA.escritorio.nome, 'Omena Advocacia');
+  assert.notEqual(cfgB.escritorio.nome, 'Omena Advocacia');
+
+  const audB = (await contaB.req('GET', '/api/estado')).dados.auditoria;
+  assert.ok(audB.every((a) => a.usuarioNome !== 'Bruno Omena'));
+});
+
+await teste('a conta entra de outro dispositivo com o mesmo e-mail e senha', async () => {
+  // Outro navegador, sem cookie algum: é o caso de acessar de outro lugar.
+  const outroDispositivo = criarCliente();
+  const r = await outroDispositivo.req('POST', '/api/sessao', {
+    email: 'bruno@escritorio-a.adv.br', senha: 'senhaforte123',
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.dados.usuario.email, 'bruno@escritorio-a.adv.br');
+  const estado = (await outroDispositivo.req('GET', '/api/estado')).dados;
+  assert.ok(estado.colecoes.processos.some((p) => p.assunto === 'Processo da conta A'));
+});
+await teste('usuário criado dentro da conta pertence a ela', async () => {
+  const r = await contaA.req('POST', '/api/usuarios', {
+    nome: 'Assistente', email: 'assistente@escritorio-a.adv.br', senha: 'senhaforte123',
+    perfil: 'assistente',
+  });
+  assert.equal(r.status, 201);
+  assert.equal(r.dados.usuario.contaId, dadosA.conta);
+
+  const dele = criarCliente();
+  await dele.req('POST', '/api/sessao', {
+    email: 'assistente@escritorio-a.adv.br', senha: 'senhaforte123',
+  });
+  const estado = (await dele.req('GET', '/api/estado')).dados;
+  assert.ok(estado.colecoes.processos.some((p) => p.assunto === 'Processo da conta A'));
+});
+await teste('a redefinição por e-mail encontra a conta certa', async () => {
+  const r = await criarCliente().req('POST', '/api/recuperacao',
+    { email: 'outro@escritorio-b.adv.br' });
+  assert.equal(r.status, 200);
+  assert.match(r.dados.mensagem, /instruções de redefinição/i);
+});
+
 console.log(`\n${passou} verificações concluídas.`);
 encerrar();
 process.exit(process.exitCode || 0);
