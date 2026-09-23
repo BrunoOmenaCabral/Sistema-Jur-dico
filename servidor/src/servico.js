@@ -392,15 +392,15 @@ function descreverMudancas(antes, mudancas) {
  */
 export async function prepararBase() {
   if ((await banco.contas()).length) return null;
+  // Sem senha de administrador declarada, nenhuma conta é criada: quem chegar
+  // primeiro cadastra a sua. Criar um acesso padrão só para existir alguém
+  // deixaria no servidor uma conta que ninguém pediu, com senha em registro.
+  if (!config.admin.senha) return null;
 
-  const senha = config.admin.senha || gerarSenhaInicial();
+  const senha = config.admin.senha;
   const { usuario } = await criarConta({
     nome: config.admin.nome, email: config.admin.email, senha, escritorio: 'Escritório',
   });
-  return { email: usuario.email, senha, gerada: !config.admin.senha };
+  return { email: usuario.email, senha, gerada: false };
 }
 
-function gerarSenhaInicial() {
-  const alfabeto = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: 14 }, () => alfabeto[Math.floor(Math.random() * alfabeto.length)]).join('');
-}
