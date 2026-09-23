@@ -1,11 +1,12 @@
 // Configurações: escritório, régua de alertas, cores, calendário forense,
 // integrações, auditoria, lixeira e backup.
 
-import { h, qs, esc, delegar, aviso, confirmar } from '../ui/ui.js';
+import { h, qs, esc, delegar, aviso, confirmar, modal } from '../ui/ui.js';
 import { modalFormulario } from '../ui/formulario.js';
 import { cabecalhoPagina } from '../ui/componentes.js';
 import {
   db, COLECOES, modoAtual, sincronizarCompleto, DIAS_ROTINA, usoDoArmazenamento,
+  importarParaServidor,
 } from '../core/store.js';
 import { pode } from '../core/auth.js';
 import { fmtData, fmtDataHora, hoje } from '../core/util.js';
@@ -260,8 +261,16 @@ export function configuracoes() {
       + 'anexados e o registro de auditoria.'}</p>
         <div class="linha">
           <button class="btn btn--primario" data-acao="exportar">Exportar backup</button>
-          ${modoAtual() === 'servidor' ? '' : '<button class="btn" data-acao="importar">Importar backup</button>'}
+          ${modoAtual() === 'servidor'
+    ? '<button class="btn" data-acao="migrar">Trazer base do navegador</button>'
+    : '<button class="btn" data-acao="importar">Importar backup</button>'}
         </div>
+        ${modoAtual() === 'servidor' ? `<div class="mini mudo" style="margin-top:.5rem">
+          Quem usou o sistema sem servidor traz o que já tinha: exporte o backup no endereço
+          antigo e envie o arquivo aqui. Cadastros, prazos, publicações, movimentações,
+          documentos e lançamentos entram nesta conta com os mesmos identificadores, de modo
+          que os vínculos entre eles permanecem. Usuários e senhas não vêm junto — o acesso
+          agora é o desta conta.</div>` : ''}
         <div class="mini mudo" style="margin-top:.5rem">
           ${modoAtual() === 'servidor' ? 'Conectado ao servidor. Os dados são compartilhados por toda a equipe.'
     : 'Cópia diária automática no navegador: ativa.'}
@@ -427,6 +436,57 @@ export function configuracoes() {
   delegar(tela, 'click', '[data-acao="exportar"]', () => {
     baixarArquivo(`backup-sentinela-${hoje()}.json`, db.exportar(), 'application/json');
     aviso('Backup gerado.', 'ok');
+  });
+  delegar(tela, 'click', '[data-acao="migrar"]', () => {
+    let enviando = false;
+    const seletor = h(`<div>
+      <p>Escolha o arquivo exportado do sistema quando ele funcionava no navegador.</p>
+      <input type="file" accept="application/json" data-arquivo>
+      <div class="mini mudo" style="margin-top:.4rem">Registro já existente nesta conta é
+        recusado pelo servidor e relatado ao fim: repetir a importação não duplica nada.</div>
+      <div data-situacao style="margin-top:.6rem"></div>
+    </div>`);
+
+    modal({
+      titulo: 'Trazer base do navegador para esta conta',
+      conteudo: seletor,
+      acoes: [
+        { rotulo: 'Fechar', aoClicar: (fechar) => fechar() },
+        { rotulo: 'Enviar para o servidor', classe: 'btn--primario', aoClicar: async () => {
+          if (enviando) return;
+          const arquivo = seletor.querySelector('[data-arquivo]').files?.[0];
+          const situacao = seletor.querySelector('[data-situacao]');
+          if (!arquivo) {
+            situacao.innerHTML = '<div class="aviso aviso--alerta">Escolha o arquivo.</div>';
+            return;
+          }
+          enviando = true;
+          situacao.innerHTML = '<div class="aviso aviso--info">Lendo o arquivo…</div>';
+          try {
+            const r = await importarParaServidor(await arquivo.text(), {
+              aoProgresso: ({ enviados, total }) => {
+                situacao.innerHTML = `<div class="aviso aviso--info">Enviando ${enviados}
+                  de ${total} registro(s)…</div>`;
+              },
+            });
+            situacao.innerHTML = `<div class="aviso aviso--ok">
+              ${r.enviados} registro(s) trazidos para esta conta.
+              ${r.configuracoes ? ' Configurações do escritório aplicadas.' : ''}
+              <div class="mini">${r.usuarios ? `${r.usuarios} usuário(s) do arquivo não vieram: `
+    + 'o acesso é o desta conta. ' : ''}${r.naLixeira ? `${r.naLixeira} registro(s) na lixeira `
+    + 'ficaram de fora. ' : ''}${r.recusados.length ? `${r.recusados.length} já existiam aqui.` : ''}</div>
+            </div>`;
+            aviso(`${r.enviados} registro(s) trazidos do navegador.`, 'ok', 8000);
+            desenhar();
+          } catch (e) {
+            situacao.innerHTML = `<div class="aviso aviso--alerta">Não foi possível concluir:
+              ${esc(e.message)}</div>`;
+          } finally {
+            enviando = false;
+          }
+        } },
+      ],
+    });
   });
   delegar(tela, 'click', '[data-acao="importar"]', () => {
     const input = h('<input type="file" accept="application/json" class="oculto">');

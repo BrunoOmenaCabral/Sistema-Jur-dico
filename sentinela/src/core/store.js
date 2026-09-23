@@ -196,6 +196,92 @@ export function usoDoArmazenamento() {
   };
 }
 
+/* ------------------------------------ migração da base do navegador ------ */
+
+// Nunca sobem: usuários trazem senha do navegador, que o servidor não usa;
+// auditoria e notificações são do aparelho e o servidor tem as suas.
+const NAO_MIGRA = ['usuarios', 'auditoria', 'notificacoes'];
+
+// Clientes e processos primeiro: o registro que depende deles chega depois, e
+// o histórico do servidor fica legível na ordem em que se cadastraria à mão.
+const ORDEM_MIGRACAO = ['clientes', 'processos', 'movimentacoes', 'publicacoes', 'prazos',
+  'tarefas', 'audiencias', 'documentos', 'comunicacoes', 'financeiro', 'receitas',
+  'cobrancas', 'feriados', 'suspensoes'];
+
+const TAMANHO_LOTE = 150;
+const BYTES_LOTE = 3 * 1024 * 1024;
+
+/**
+ * Sobe para a conta do servidor uma base exportada do navegador.
+ *
+ * É o caminho de quem usou o sistema sem servidor e passou a ter conta: os
+ * dados ficaram no armazenamento de um endereço, e o servidor costuma estar em
+ * outro, onde aquele armazenamento não é alcançável. O arquivo exportado é a
+ * ponte entre os dois.
+ *
+ * Os identificadores são preservados, para que o vínculo entre processo,
+ * cliente, prazo e publicação continue de pé. Registro que o servidor já tenha
+ * é recusado por ele e relatado aqui, de modo que repetir a importação não
+ * duplica nada.
+ */
+export async function importarParaServidor(json, { aoProgresso = null } = {}) {
+  if (modo !== 'servidor') throw new Error('A importação para a conta exige o sistema conectado ao servidor.');
+  const dados = typeof json === 'string' ? JSON.parse(json) : json;
+
+  const mutacoes = [];
+  let naLixeira = 0;
+  for (const colecao of ORDEM_MIGRACAO) {
+    if (NAO_MIGRA.includes(colecao)) continue;
+    for (const registro of dados[colecao] || []) {
+      if (!registro?.id) continue;
+      if (registro.excluidoEm) { naLixeira += 1; continue; }
+      mutacoes.push({ op: 'inserir', colecao, dados: registro,
+        detalhe: 'Importado da base do navegador' });
+    }
+  }
+
+  const resultado = { enviados: 0, recusados: [], naLixeira, total: mutacoes.length,
+    usuarios: (dados.usuarios || []).length, configuracoes: false };
+
+  for (let i = 0; i < mutacoes.length;) {
+    const lote = [];
+    let bytes = 0;
+    while (i < mutacoes.length && lote.length < TAMANHO_LOTE && bytes < BYTES_LOTE) {
+      const item = mutacoes[i];
+      bytes += JSON.stringify(item).length;
+      lote.push(item);
+      i += 1;
+    }
+    const r = await api.mutacoes(lote);
+    resultado.enviados += r.aplicadas?.length || 0;
+    for (const recusada of r.recusadas || []) {
+      resultado.recusados.push({ colecao: recusada.colecao, motivo: recusada.motivo });
+    }
+    aoProgresso?.({ enviados: resultado.enviados, total: mutacoes.length });
+  }
+
+  if (dados.configuracoes) {
+    // As configurações do escritório vão junto; o que é da conta no servidor
+    // (última consulta, rondas) não é sobrescrito pelo que veio do navegador.
+    const { integracoes, ...resto } = dados.configuracoes;
+    await api.salvarConfiguracoes({
+      ...resto,
+      integracoes: {
+        ...(estado.configuracoes.integracoes || {}),
+        ...(integracoes || {}),
+        publicacoes: { ...(integracoes?.publicacoes || {}),
+          ultimaConsulta: estado.configuracoes.integracoes?.publicacoes?.ultimaConsulta || null },
+        tribunais: { ...(integracoes?.tribunais || {}),
+          rondas: estado.configuracoes.integracoes?.tribunais?.rondas || { ativo: true } },
+      },
+    });
+    resultado.configuracoes = true;
+  }
+
+  await sincronizarCompleto();
+  return resultado;
+}
+
 export const aoMudar = (fn) => { ouvintes.add(fn); return () => ouvintes.delete(fn); };
 
 /** Observa o estado da sincronização: { pendentes, erro, sincronizadoEm }. */
