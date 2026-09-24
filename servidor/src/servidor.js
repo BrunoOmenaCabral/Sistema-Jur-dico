@@ -102,6 +102,8 @@ async function api(req, res, url) {
       // Em hospedagem sem disco, só o banco gerenciado preserva os dados.
       dadosPreservados: gerenciado,
       email: emailDisponivel(),
+      // Consulta de publicações: o CNJ só atende de dentro do Brasil.
+      djen: config.djenPonte ? 'ponte' : 'direto',
       enderecoPublico: Boolean(config.enderecoPublico),
       segredoFixo: Boolean(process.env.SENTINELA_SEGREDO),
       // Quais credenciais do banco chegaram ao processo. Distinguir as duas
@@ -257,7 +259,10 @@ async function api(req, res, url) {
     for (let tentativa = 0; tentativa < 2; tentativa += 1) {
       if (tentativa) await new Promise((r) => setTimeout(r, 700));
       try {
-        const externa = await fetch(`${config.djenBase}/comunicacao?${parametros}`, {
+        const alvo = config.djenPonte
+          ? `${config.djenPonte}?${parametros}`
+          : `${config.djenBase}/comunicacao?${parametros}`;
+        const externa = await fetch(alvo, {
           headers: { Accept: 'application/json' },
           signal: AbortSignal.timeout(config.tempoLimiteConsultaMs),
         });

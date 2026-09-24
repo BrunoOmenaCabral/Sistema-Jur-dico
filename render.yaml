@@ -25,6 +25,12 @@ services:
       # Endereço público do serviço, usado no link de redefinição de senha.
       - key: SENTINELA_ENDERECO
         sync: false
+      # O CNJ só atende consulta de publicações originada do Brasil, e esta
+      # hospedagem não tem região no país. O endereço de uma ponte brasileira
+      # (a função /api/djen do próprio projeto, publicada em São Paulo) entra
+      # aqui; sem ela, a consulta de publicações volta 403.
+      - key: SENTINELA_DJEN_PONTE
+        sync: false
       # Provedor de e-mail (formato da API do Resend e compatíveis).
       - key: SENTINELA_EMAIL_ENDPOINT
         sync: false

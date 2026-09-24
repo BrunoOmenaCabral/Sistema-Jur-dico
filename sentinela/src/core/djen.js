@@ -104,7 +104,9 @@ async function requisitar(parametros, sinal) {
         ? `A consulta partiu da região ${onde}. `
           + (onde.startsWith('gru') ? 'A região está no Brasil, então o motivo é outro.'
             : 'Configure a hospedagem para executar em São Paulo (gru1).')
-        : 'Verifique de onde a hospedagem executa a consulta.'));
+        : 'A hospedagem deste servidor executa fora do país. Defina a variável '
+          + 'SENTINELA_DJEN_PONTE com o endereço de uma ponte hospedada no Brasil '
+          + '(a função /api/djen deste mesmo projeto, publicada em São Paulo).'));
   }
   if (!resposta.ok) {
     // O repasse devolve o status e o texto que vieram do CNJ. Mostrar o status

@@ -29,6 +29,11 @@ export const config = {
   semearDemonstracao: process.env.SENTINELA_DEMO === 'true',
   // Consulta pública de comunicações do CNJ, repassada pelo servidor.
   djenBase: (process.env.SENTINELA_DJEN_BASE || 'https://comunicaapi.pje.jus.br/api/v1').replace(/\/$/, ''),
+  // O CNJ recusa consulta originada fora do Brasil. Quando a hospedagem do
+  // servidor fica no exterior, a consulta precisa sair de uma ponte no país:
+  // o endereço completo dela vai aqui, e recebe os parâmetros direto na
+  // consulta, sem sufixo de caminho.
+  djenPonte: (process.env.SENTINELA_DJEN_PONTE || '').trim().replace(/\?$/, ''),
   tempoLimiteConsultaMs: Number(process.env.SENTINELA_CONSULTA_TIMEOUT || 25000),
   // Envio de e-mail por API HTTP do provedor. Sem isso, a redefinição de senha
   // é criada mas não sai do servidor, e quem pediu é avisado disso.
