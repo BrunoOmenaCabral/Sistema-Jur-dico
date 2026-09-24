@@ -27,9 +27,10 @@ export function dashboard() {
     fmtDataExtenso(hoje()))}
 
     <div class="grade grade--indicadores" style="margin-bottom:1rem" id="indicadores">
-      ${cartaoIndicador({ rotulo: 'Prazos vencidos', valor: ind.vencidos,
-        nota: ind.vencidos ? 'exigem providência imediata' : 'nenhuma pendência vencida',
-        variante: ind.vencidos ? 'fatal' : 'ok', rota: 'prazos?filtro=vencidos' })}
+      ${cartaoIndicador({ rotulo: 'Prazos ativos', valor: ind.prazosAtivos,
+        nota: ind.vencidos ? `${ind.vencidos} já vencido(s)` : 'nenhum vencido',
+        variante: ind.vencidos ? 'fatal' : ind.prazosAtivos ? 'proximo' : 'ok',
+        rota: 'prazos' })}
       ${cartaoIndicador({ rotulo: 'Hoje', valor: ind.prazosHoje + ind.tarefasHoje + ind.audienciasHoje,
         nota: `${ind.prazosHoje} prazos · ${ind.tarefasHoje} tarefas · ${ind.audienciasHoje} audiências`,
         variante: ind.prazosHoje ? 'proximo' : '', rota: 'agenda' })}

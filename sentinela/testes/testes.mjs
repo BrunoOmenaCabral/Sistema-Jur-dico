@@ -233,6 +233,10 @@ teste('indicadores refletem a base', () => {
   assert.ok(i.processosAtivos >= 3);
   assert.ok(i.publicacoesPendentes >= 2);
   assert.ok(i.vencidos >= 1);
+  // Prazo ativo é todo o que está em aberto, vencido ou não: o painel mostra a
+  // carteira de trabalho pendente, e o vencido é um recorte dela.
+  assert.ok(i.prazosAtivos >= i.vencidos, 'os ativos contêm os vencidos');
+  assert.ok(i.prazosAtivos >= i.vencidos + i.prazosHoje);
 });
 teste('agenda reúne prazos, tarefas e audiências', () => {
   const eventos = eventosAgenda({ de: addDays(hoje(), -30), ate: addDays(hoje(), 30) });

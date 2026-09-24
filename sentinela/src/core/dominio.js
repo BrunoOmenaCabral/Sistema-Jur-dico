@@ -264,6 +264,9 @@ export function indicadores(ref = hoje()) {
     prazos7: prazos.filter((p) => prazoAberto(p) && p.dataVencimento > ref && p.dataVencimento <= em7).length,
     tarefas7: tarefas.filter((t) => tarefaAberta(t) && t.dataVencimento > ref && t.dataVencimento <= em7).length,
     audiencias7: audiencias.filter((a) => a.data > ref && a.data <= em7 && a.status !== 'cancelada').length,
+    // Prazo em aberto, vencido ou não: é a carteira de trabalho pendente, e
+    // não muda de natureza por ter passado da data.
+    prazosAtivos: prazos.filter(prazoAberto).length,
     vencidos: prazos.filter((p) => prazoAberto(p) && p.dataVencimento < ref).length,
     tarefasVencidas: tarefas.filter((t) => tarefaAberta(t) && t.dataVencimento && t.dataVencimento < ref).length,
     publicacoesPendentes: db.listar('publicacoes').filter((p) => p.status === 'pendente').length,
