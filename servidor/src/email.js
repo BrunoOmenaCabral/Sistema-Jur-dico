@@ -39,7 +39,12 @@ export async function enviar({ para, assunto, texto }) {
       signal: AbortSignal.timeout(config.tempoLimiteConsultaMs),
     });
     if (!resposta.ok) {
-      return { enviado: false, motivo: `O provedor de e-mail respondeu ${resposta.status}.` };
+      // O corpo da recusa é o que identifica a causa — remetente não
+      // verificado, chave revogada, destinatário fora do permitido em conta
+      // de teste. Sem ele, resta adivinhar a partir do número.
+      const detalhe = (await resposta.text().catch(() => '')).slice(0, 300);
+      return { enviado: false,
+        motivo: `O provedor de e-mail respondeu ${resposta.status}. ${detalhe}`.trim() };
     }
     return { enviado: true };
   } catch (e) {
