@@ -639,8 +639,16 @@ teste('dias escolhidos pelo escritório são preservados', () => {
 });
 teste('integração gravada antes recebe os campos novos', () => {
   const cfg = normalizarConfiguracoes({ integracoes: { publicacoes: { oabs: '222/SP' } } });
-  assert.equal(cfg.integracoes.publicacoes.diasConsulta, 30);
+  // Zero é a retomada da última consulta, padrão de quem consulta com rotina.
+  assert.equal(cfg.integracoes.publicacoes.diasConsulta, 0);
   assert.ok(cfg.integracoes.tribunais);
+
+  // O período fixo de 30 dias era o padrão antigo e relia o mesmo mês a cada
+  // busca: migra. Período escolhido de propósito permanece.
+  const migrada = normalizarConfiguracoes({ integracoes: { publicacoes: { diasConsulta: 30 } } });
+  assert.equal(migrada.integracoes.publicacoes.diasConsulta, 0);
+  const escolhida = normalizarConfiguracoes({ integracoes: { publicacoes: { diasConsulta: 15 } } });
+  assert.equal(escolhida.integracoes.publicacoes.diasConsulta, 15);
 });
 
 console.log('\nArquivamento e exclusão de processo');

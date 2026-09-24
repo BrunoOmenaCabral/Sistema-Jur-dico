@@ -48,6 +48,9 @@ const ROTINA_ANTIGA = ['seg', 'qua', 'sex'];
  * a base criada antes da mudança manteria a consulta em três dias da semana —
  * periodicidade que nunca esteve ao alcance do usuário.
  */
+// Período fixo que era o padrão antes da retomada incremental.
+const PERIODO_ANTIGO = 30;
+
 export function normalizarConfiguracoes(bruto) {
   const padrao = configuracoesPadrao();
   const cfg = { ...padrao, ...(bruto || {}) };
@@ -60,6 +63,12 @@ export function normalizarConfiguracoes(bruto) {
     && ROTINA_ANTIGA.every((d) => pub.dias.includes(d));
   if (rotinaAntiga || !Array.isArray(pub.dias) || !pub.dias.length) {
     cfg.integracoes.publicacoes = { ...pub, dias: [...DIAS_ROTINA] };
+  }
+  // Base criada quando o período fixo de 30 dias era o padrão: passa a retomar
+  // da última consulta, que era o que o período fixo não fazia. Quem escolher
+  // outro período depois mantém a escolha, porque só o antigo padrão migra.
+  if (cfg.integracoes.publicacoes.diasConsulta === PERIODO_ANTIGO) {
+    cfg.integracoes.publicacoes = { ...cfg.integracoes.publicacoes, diasConsulta: 0 };
   }
   return cfg;
 }
@@ -86,7 +95,7 @@ export function configuracoesPadrao() {
     },
     integracoes: {
       publicacoes: { ativo: false, provedor: '', chave: '', oabs: '',
-        dias: [...DIAS_ROTINA], ultimaConsulta: null, diasConsulta: 30 },
+        dias: [...DIAS_ROTINA], ultimaConsulta: null, diasConsulta: 0 },
       ia: { ativo: false, provedor: 'heuristico', endpoint: '', chave: '', modelo: '' },
       whatsapp: { ativo: false, provedor: '', numero: '', token: '' },
       email: { ativo: false, remetente: '', servidor: '' },

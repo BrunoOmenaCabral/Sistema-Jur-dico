@@ -97,7 +97,9 @@ export async function consultarProcesso({ numeroCNJ, tribunal, indice = null, si
 
   const repasse = usandoRepasse();
   const endereco = repasse ? baseEmUso() : `${baseEmUso()}/api_publica_${alvo}/_search`;
-  const cabecalhos = { 'Content-Type': 'application/json' };
+  // O servidor próprio recusa escrita sem a marca de origem, e o repasse do
+  // DataJud é POST: sem ela a consulta volta 403 antes de sair da casa.
+  const cabecalhos = { 'Content-Type': 'application/json', 'X-Requisicao': 'sentinela' };
   // A chave só acompanha a chamada direta: no repasse quem a guarda é o servidor.
   if (!repasse) cabecalhos.Authorization = `APIKey ${CHAVE_PUBLICA}`;
 

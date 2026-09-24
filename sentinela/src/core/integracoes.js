@@ -137,6 +137,10 @@ const DIAS_SEMANA_ID = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
 // diário publica com disponibilização retroativa e o dia em que a consulta falhou.
 const RETROACAO = 3;
 
+// Piso da janela automática. Uma semana cobre o intervalo entre aberturas do
+// sistema e a disponibilização retroativa, sem repetir um mês a cada consulta.
+const MINIMO_DIAS = 7;
+
 /**
  * Inscrições na OAB acompanhadas pelo escritório.
  *
@@ -201,9 +205,14 @@ export const publicacoes = {
     // Retoma de onde parou, mas sempre com alguns dias de sobreposição: o DJEN
     // publica comunicação cuja disponibilização é anterior ao dia da consulta e,
     // se um dia falhar, a sobreposição impede que o período vire buraco.
-    const inicio = de
-      || (dias ? addDays(ref, -Math.abs(dias)) : null)
-      || (cfg.ultimaConsulta ? addDays(cfg.ultimaConsulta, -RETROACAO) : addDays(ref, -7));
+    // Sem período declarado, a consulta retoma de onde parou — com sobreposição
+    // e nunca com menos de uma semana. O piso importa: a comunicação chega ao
+    // diário com disponibilização retroativa, e uma janela de um ou dois dias a
+    // perderia justamente quando ela é nova.
+    const retomada = cfg.ultimaConsulta
+      ? [addDays(cfg.ultimaConsulta, -RETROACAO), addDays(ref, -MINIMO_DIAS)].sort()[0]
+      : addDays(ref, -MINIMO_DIAS);
+    const inicio = de || (dias ? addDays(ref, -Math.abs(dias)) : retomada);
     const fim = ate || ref;
     const brutas = [];
     const falhas = [];

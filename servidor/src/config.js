@@ -34,7 +34,9 @@ export const config = {
   // o endereço completo dela vai aqui, e recebe os parâmetros direto na
   // consulta, sem sufixo de caminho.
   djenPonte: (process.env.SENTINELA_DJEN_PONTE || '').trim().replace(/\?$/, ''),
-  tempoLimiteConsultaMs: Number(process.env.SENTINELA_CONSULTA_TIMEOUT || 25000),
+  // O DataJud responde com frequência acima de trinta segundos; o limite
+  // antigo, de 25, transformava lentidão do CNJ em falha de consulta.
+  tempoLimiteConsultaMs: Number(process.env.SENTINELA_CONSULTA_TIMEOUT || 50000),
   // Envio de e-mail por API HTTP do provedor. Sem isso, a redefinição de senha
   // é criada mas não sai do servidor, e quem pediu é avisado disso.
   email: {

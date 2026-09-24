@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { config } from './config.js';
+import { consultarPJe } from './pje.js';
 import { enviar as enviarEmail, disponivel as emailDisponivel } from './email.js';
 import { abrirBanco, banco } from './banco.js';
 import {
@@ -314,6 +315,20 @@ async function api(req, res, url) {
     } catch (e) {
       return responder(res, 504, { erro: `Consulta ao DataJud não concluída: ${e.message}` });
     }
+  }
+
+  // Repasse da consulta pública do PJe.
+  //
+  // A base do CNJ vem em lotes e fica dias atrás dos autos; a consulta pública
+  // do tribunal responde com o andamento do momento. São três idas encadeadas
+  // por cookie, que o navegador não consegue fazer a outra origem.
+  if (rota === '/pje' && metodo === 'GET') {
+    const { status, corpo } = await consultarPJe({
+      tribunal: url.searchParams.get('tribunal'),
+      grau: url.searchParams.get('grau'),
+      numeroProcesso: url.searchParams.get('numeroProcesso'),
+    });
+    return responder(res, status, corpo);
   }
 
   if (rota === '/estado' && metodo === 'GET') {

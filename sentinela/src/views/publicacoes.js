@@ -34,7 +34,9 @@ export function publicacoes({ params }) {
   const cfg = db.config().integracoes.publicacoes;
   // O período escolhido fica guardado: a tela é redesenhada a cada consulta e a
   // escolha não pode voltar sozinha ao padrão.
-  const diasConsulta = Number(cfg.diasConsulta) || 30;
+  // Zero significa retomar de onde a última consulta parou, que é o padrão:
+  // período fixo repete o que já foi lido a cada busca.
+  const diasConsulta = Number(cfg.diasConsulta) || 0;
   const inscricoes = oabsMonitoradas();
   const fonte = cfg.ativo && cfg.provedor
     ? `Provedor contratado: ${cfg.provedor}`
@@ -45,6 +47,7 @@ export function publicacoes({ params }) {
   const tela = h(`<div>
     ${cabecalhoPagina('Publicações', `
       <select class="btn" data-periodo title="Período da consulta">
+        <option value="0" ${diasConsulta ? '' : 'selected'}>desde a última consulta</option>
         ${[7, 15, 30, 60, 90].map((d) => `<option value="${d}"
           ${d === diasConsulta ? 'selected' : ''}>últimos ${d} dias</option>`).join('')}
       </select>
@@ -185,7 +188,7 @@ export function publicacoes({ params }) {
   delegar(tela, 'change', '[data-periodo]', (_e, el) => {
     const conf = db.config().integracoes;
     db.salvarConfig({ integracoes: { ...conf,
-      publicacoes: { ...conf.publicacoes, diasConsulta: Number(el.value) || 30 } } });
+      publicacoes: { ...conf.publicacoes, diasConsulta: Number(el.value) || 0 } } });
   });
   delegar(tela, 'click', '[data-acao="importar"]', () => abrirImportacao(desenhar));
   delegar(tela, 'click', '[data-acao="consultar"]', async (_e, el) => {
@@ -198,7 +201,9 @@ export function publicacoes({ params }) {
       // Prendê-la à última consulta encolhia a janela para um único dia e, depois
       // da primeira busca do dia, nada mais voltava.
       const dias = Number(qs('[data-periodo]', tela)?.value) || diasConsulta;
-      const r = await servicoPublicacoes.consultar({ dias });
+      // Sem período fixo, o serviço retoma da última consulta com o piso de uma
+      // semana — é o que evita reler o mesmo mês a cada busca.
+      const r = await servicoPublicacoes.consultar(dias ? { dias } : {});
       aviso(r.mensagem, r.erro ? 'erro' : r.recebidas ? 'ok' : 'atencao');
       recarregar();
     } finally {
