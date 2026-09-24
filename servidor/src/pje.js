@@ -19,7 +19,8 @@
 // caminho — uns separam os graus na URL, outros servem os dois no mesmo
 // endereço. Acrescentar tribunal aqui é acrescentar uma linha; o que não se
 // pode é presumir: instalação em outra variante não responde a este acordo, e
-// por isso cada entrada abaixo foi conferida contra processo real.
+// seis das entradas abaixo foram exercitadas contra processo real; TJMA entra
+// pela identidade da página, que é a mesma, sem processo à mão para confirmar.
 const TRIBUNAIS = {
   tjpe: { base: 'https://pje.tjpe.jus.br', caminho: (g) => `/${g}/ConsultaPublica/listView.seam` },
   tjba: { base: 'https://pje.tjba.jus.br', caminho: () => '/pje/ConsultaPublica/listView.seam' },
