@@ -111,6 +111,11 @@ async function api(req, res, url) {
         url: Boolean(config.turso.url),
         token: Boolean(config.turso.token),
         tamanhoToken: config.turso.token.length,
+        // Só os nomes das variáveis, nunca os valores. Um nome digitado com
+        // um caractere a mais é invisível na tela do painel e derruba a
+        // configuração inteira; listá-los transforma adivinhação em leitura.
+        nomesVistos: Object.keys(process.env)
+          .filter((n) => /TURSO|LIBSQL|SENTINELA/i.test(n)).sort(),
       },
       pendencias: [
         gerenciado ? null : `Banco gerenciado ausente: ${
