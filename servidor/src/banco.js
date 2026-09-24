@@ -278,10 +278,15 @@ async function abrirTurso() {
       // A causa quase sempre é o token, e o recado do serviço não ajuda quem
       // está configurando a hospedagem. Vale traduzir.
       if (/JWT|token|Unauthorized/i.test(detalhe) || resposta.status === 401) {
+        // O tamanho é o que denuncia a causa mais comum: colagem cortada.
+        // Um token do Turso tem algumas centenas de caracteres e três blocos
+        // separados por ponto. Nada disso revela o segredo.
+        const blocos = token.split('.').length;
         throw new Error(
-          'O banco recusou o token (TURSO_AUTH_TOKEN). Confira se o valor foi '
-          + 'copiado inteiro, em uma linha só, sem aspas e sem "Bearer" na frente. '
-          + `Resposta do banco: ${detalhe}`,
+          `O banco recusou o token (TURSO_AUTH_TOKEN). O valor recebido tem ${token.length} `
+          + `caracteres e ${blocos} bloco(s) separados por ponto; um token válido tem algumas `
+          + 'centenas de caracteres e 3 blocos. Se o número parecer pequeno, a colagem foi '
+          + `cortada. Resposta do banco: ${detalhe}`,
         );
       }
       throw new Error(`Banco respondeu ${resposta.status}: ${detalhe}`);
