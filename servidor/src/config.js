@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 const aqui = dirname(fileURLToPath(import.meta.url));
 export const RAIZ = resolve(aqui, '..', '..');
 
+const semEspacos = (v) => String(v || '').replace(/[\s"']/g, '');
+
 export const config = {
   porta: Number(process.env.PORTA || process.env.PORT || 3000),
   host: process.env.HOST || '0.0.0.0',
@@ -45,8 +47,12 @@ export const config = {
   // Endereço público do sistema, usado no link enviado por e-mail.
   // Banco gerenciado: com ele, a hospedagem dispensa disco próprio.
   turso: {
-    url: (process.env.TURSO_DATABASE_URL || '').trim(),
-    token: (process.env.TURSO_AUTH_TOKEN || '').trim(),
+    // Nem URL nem token têm espaço em branco. Colados no painel da
+    // hospedagem, porém, chegam com frequência quebrados em linhas ou com um
+    // "Bearer " na frente, e o banco recusa sem dizer o porquê. Limpar aqui
+    // custa nada e evita um erro que não se enxerga lendo o valor na tela.
+    url: semEspacos(process.env.TURSO_DATABASE_URL),
+    token: semEspacos(process.env.TURSO_AUTH_TOKEN).replace(/^Bearer\s*/i, ''),
   },
   enderecoPublico: (process.env.SENTINELA_ENDERECO || '').replace(/\/$/, ''),
   minutosRecuperacao: Number(process.env.SENTINELA_RECUPERACAO_MINUTOS || 30),

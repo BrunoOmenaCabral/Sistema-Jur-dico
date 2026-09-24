@@ -274,7 +274,17 @@ async function abrirTurso() {
       signal: AbortSignal.timeout(20000),
     });
     if (!resposta.ok) {
-      throw new Error(`Banco respondeu ${resposta.status}: ${(await resposta.text()).slice(0, 200)}`);
+      const detalhe = (await resposta.text()).slice(0, 200);
+      // A causa quase sempre é o token, e o recado do serviço não ajuda quem
+      // está configurando a hospedagem. Vale traduzir.
+      if (/JWT|token|Unauthorized/i.test(detalhe) || resposta.status === 401) {
+        throw new Error(
+          'O banco recusou o token (TURSO_AUTH_TOKEN). Confira se o valor foi '
+          + 'copiado inteiro, em uma linha só, sem aspas e sem "Bearer" na frente. '
+          + `Resposta do banco: ${detalhe}`,
+        );
+      }
+      throw new Error(`Banco respondeu ${resposta.status}: ${detalhe}`);
     }
     const corpo = await resposta.json();
     const saida = [];
