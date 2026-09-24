@@ -104,9 +104,20 @@ async function api(req, res, url) {
       email: emailDisponivel(),
       enderecoPublico: Boolean(config.enderecoPublico),
       segredoFixo: Boolean(process.env.SENTINELA_SEGREDO),
+      // Quais credenciais do banco chegaram ao processo. Distinguir as duas
+      // poupa adivinhação: um valor em branco no painel da hospedagem é
+      // indistinguível de um valor correto quando se olha só a tela.
+      banco: {
+        url: Boolean(config.turso.url),
+        token: Boolean(config.turso.token),
+        tamanhoToken: config.turso.token.length,
+      },
       pendencias: [
-        gerenciado ? null : 'Defina TURSO_DATABASE_URL e TURSO_AUTH_TOKEN: sem banco '
-          + 'gerenciado, os dados se perdem quando a hospedagem recria o serviço.',
+        gerenciado ? null : `Banco gerenciado ausente: ${
+          !config.turso.url && !config.turso.token ? 'TURSO_DATABASE_URL e TURSO_AUTH_TOKEN não chegaram ao servidor'
+            : !config.turso.url ? 'TURSO_DATABASE_URL está vazia'
+              : 'TURSO_AUTH_TOKEN está vazio'
+        }. Sem ele, os dados se perdem quando a hospedagem recria o serviço.`,
         emailDisponivel() ? null : 'Defina SENTINELA_EMAIL_ENDPOINT, SENTINELA_EMAIL_CHAVE e '
           + 'SENTINELA_EMAIL_REMETENTE para o link de redefinição chegar ao e-mail.',
         config.enderecoPublico ? null : 'Defina SENTINELA_ENDERECO com o endereço público, '
