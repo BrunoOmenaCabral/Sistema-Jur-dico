@@ -13,9 +13,23 @@ import { cnjDigitos, fmtCNJ } from './util.js';
 import { ponteDisponivel } from './ponte.js';
 import { modoAtual } from './store.js';
 
-/** Tribunais cuja consulta pública já foi verificada. */
+/**
+ * Tribunais cuja consulta pública já foi verificada contra processo real.
+ *
+ * A chave é a sigla; `codigo` é o par segmento/tribunal do número CNJ, que é
+ * como se descobre o foro a partir do próprio número. Só entram aqui os que
+ * responderam à cadeia de requisições: instalação do PJe em outra variante
+ * devolve a página, mas não a pesquisa, e prometer o que não se conferiu seria
+ * pior do que dizer que não há.
+ */
 export const PJE_TRIBUNAIS = {
-  tjpe: { rotulo: 'TJPE', graus: ['1g', '2g'] },
+  tjpe: { rotulo: 'TJPE', codigo: '817', graus: ['1g', '2g'] },
+  tjba: { rotulo: 'TJBA', codigo: '805', graus: ['1g'] },
+  tjma: { rotulo: 'TJMA', codigo: '810', graus: ['1g'] },
+  tjpb: { rotulo: 'TJPB', codigo: '815', graus: ['1g'] },
+  tjmg: { rotulo: 'TJMG', codigo: '813', graus: ['1g'] },
+  tjrj: { rotulo: 'TJRJ', codigo: '819', graus: ['1g', '2g'] },
+  trf1: { rotulo: 'TRF1', codigo: '401', graus: ['1g'] },
 };
 
 /** O código do tribunal no número CNJ: 8.17 é a Justiça Estadual de Pernambuco. */
@@ -23,9 +37,14 @@ export function tribunalPJe({ numeroCNJ, tribunal = '' }) {
   const sigla = String(tribunal || '').trim().toLowerCase();
   if (PJE_TRIBUNAIS[sigla]) return sigla;
   const d = cnjDigitos(numeroCNJ);
-  if (d.length === 20 && d.slice(13, 14) === '8' && d.slice(14, 16) === '17') return 'tjpe';
-  return null;
+  if (d.length !== 20) return null;
+  const codigo = d.slice(13, 16);
+  const achado = Object.entries(PJE_TRIBUNAIS).find(([, v]) => v.codigo === codigo);
+  return achado ? achado[0] : null;
 }
+
+/** Graus que vale tentar no tribunal, para não pedir o que ele não serve. */
+export const grausPJe = (sigla) => PJE_TRIBUNAIS[sigla]?.graus || ['1g'];
 
 const falha = (motivo, extra = {}) => ({ ok: false, motivo, movimentos: [], ...extra });
 
@@ -39,10 +58,15 @@ export async function consultarPJe({ numeroCNJ, tribunal = '', grau = null, sina
   // Sem grau declarado, procura-se no primeiro e, não achando, no segundo: o
   // agravo de instrumento e a apelação correm no segundo grau.
   if (!grau) {
-    const primeira = await consultarPJe({ numeroCNJ, tribunal, grau: '1g', sinal });
-    if (primeira.ok || !primeira.semRegistro) return primeira;
-    const segunda = await consultarPJe({ numeroCNJ, tribunal, grau: '2g', sinal });
-    return segunda.ok ? segunda : primeira;
+    const alvo = tribunalPJe({ numeroCNJ, tribunal });
+    const graus = alvo ? grausPJe(alvo) : ['1g'];
+    let ultima = null;
+    for (const g of graus) {
+      const r = await consultarPJe({ numeroCNJ, tribunal, grau: g, sinal });
+      if (r.ok || !r.semRegistro) return r;
+      ultima = ultima || r;
+    }
+    return ultima;
   }
   return consultarGrauPJe({ numeroCNJ, tribunal, grau, sinal });
 }
@@ -53,8 +77,11 @@ async function consultarGrauPJe({ numeroCNJ, tribunal = '', grau = '1g', sinal =
 
   const alvo = tribunalPJe({ numeroCNJ: numero, tribunal });
   if (!alvo) {
-    return falha('A consulta pública direta ao tribunal ainda só está disponível para o TJPE.',
-      { indisponivel: true });
+    return falha('A consulta pública direta ainda não está mapeada para este tribunal. Cada um '
+      + 'serve o PJe em uma variante, e o acordo precisa ser conferido um a um; o andamento vem '
+      + 'do DataJud, que cobre todos mas anda dias atrás dos autos. Hoje há consulta direta em '
+      + `${Object.values(PJE_TRIBUNAIS).map((v) => v.rotulo).join(', ')}.`,
+    { indisponivel: true });
   }
   if (modoAtual() !== 'servidor' && !ponteDisponivel()) {
     return falha('Esta hospedagem não repassa consultas ao tribunal. Abra o sistema pelo endereço '

@@ -1714,8 +1714,13 @@ teste('a atualização relata o que a consulta pública trouxe', () => {
 
 teste('o tribunal é deduzido do número CNJ', () => {
   assert.equal(tribunalPJe({ numeroCNJ: '0007137-88.2026.8.17.2001' }), 'tjpe');
-  assert.equal(tribunalPJe({ numeroCNJ: cnjValido(1) }), null);
+  assert.equal(tribunalPJe({ numeroCNJ: '5010754-07.2024.8.13.0625' }), 'tjmg');
+  assert.equal(tribunalPJe({ numeroCNJ: '1000963-07.2021.4.01.4004' }), 'trf1');
+  // 8.26 é o TJSP, que serve a consulta em outro sistema: sem mapeamento, o
+  // sistema precisa dizer que não sabe, e não escolher um tribunal qualquer.
+  assert.equal(tribunalPJe({ numeroCNJ: '1000000-00.2024.8.26.0100' }), null);
   assert.equal(tribunalPJe({ numeroCNJ: '', tribunal: 'TJPE' }), 'tjpe');
+  assert.equal(tribunalPJe({ numeroCNJ: '', tribunal: 'TJRJ' }), 'tjrj');
   assert.match(documentoPJe('tjpe', '1g', 'abc'), /^https:\/\/pje\.tjpe\.jus\.br\/1g\//);
 });
 

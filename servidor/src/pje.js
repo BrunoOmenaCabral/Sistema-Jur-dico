@@ -12,10 +12,28 @@
 // Usado tanto pelo servidor próprio quanto pela função da hospedagem antiga:
 // a cadeia é a mesma, só muda quem devolve a resposta.
 
+// Tribunais cuja consulta pública responde a esta cadeia.
+//
+// São todos PJe na mesma variante: formulário "fPP" e comando de pesquisa
+// declarado em script da própria página. O que muda de um para outro é só o
+// caminho — uns separam os graus na URL, outros servem os dois no mesmo
+// endereço. Acrescentar tribunal aqui é acrescentar uma linha; o que não se
+// pode é presumir: instalação em outra variante não responde a este acordo, e
+// por isso cada entrada abaixo foi conferida contra processo real.
 const TRIBUNAIS = {
-  tjpe: 'https://pje.tjpe.jus.br',
+  tjpe: { base: 'https://pje.tjpe.jus.br', caminho: (g) => `/${g}/ConsultaPublica/listView.seam` },
+  tjba: { base: 'https://pje.tjba.jus.br', caminho: () => '/pje/ConsultaPublica/listView.seam' },
+  tjma: { base: 'https://pje.tjma.jus.br', caminho: () => '/pje/ConsultaPublica/listView.seam' },
+  tjpb: { base: 'https://pje.tjpb.jus.br', caminho: () => '/pje/ConsultaPublica/listView.seam' },
+  tjmg: { base: 'https://pje.tjmg.jus.br', caminho: () => '/pje/ConsultaPublica/listView.seam' },
+  tjrj: { base: 'https://tjrj.pje.jus.br', caminho: (g) => `/${g}/ConsultaPublica/listView.seam` },
+  trf1: { base: 'https://pje1g.trf1.jus.br',
+    caminho: () => '/consultapublica/ConsultaPublica/listView.seam' },
 };
 const GRAUS = ['1g', '2g'];
+
+/** Siglas atendidas pela consulta pública, para a mensagem de quem não está. */
+export const TRIBUNAIS_ATENDIDOS = Object.keys(TRIBUNAIS);
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)'
   + ' Chrome/140.0.0.0 Safari/537.36';
@@ -86,13 +104,19 @@ export async function consultarPJe({ tribunal: sigla, grau: grauBruto, numeroPro
   const tribunal = String(sigla || 'tjpe').toLowerCase();
   const grau = GRAUS.includes(String(grauBruto)) ? String(grauBruto) : '1g';
   const numero = String(numeroProcesso || '').replace(/\D/g, '');
-  const base = TRIBUNAIS[tribunal];
+  const registro = TRIBUNAIS[tribunal];
 
-  if (!base) return resposta(400, { erro: `Tribunal não atendido: ${tribunal}.` });
+  if (!registro) {
+    return resposta(400, { erro: `A consulta pública de ${tribunal.toUpperCase()} ainda não está `
+      + 'mapeada: cada tribunal serve o PJe em uma variante, e o acordo precisa ser conferido um a '
+      + 'um. O andamento vem do DataJud, que cobre todos os tribunais mas anda dias atrás dos '
+      + `autos. Atendidos hoje: ${TRIBUNAIS_ATENDIDOS.join(', ').toUpperCase()}.`,
+    naoMapeado: true });
+  }
   if (numero.length !== 20) return resposta(400, { erro: 'Informe o número com 20 dígitos.' });
 
   const pote = jarra();
-  const consulta = `${base}/${grau}/ConsultaPublica/listView.seam`;
+  const consulta = `${registro.base}${registro.caminho(grau)}`;
 
   try {
     // 1. A página da consulta, que traz a sessão e o comando de pesquisa.
