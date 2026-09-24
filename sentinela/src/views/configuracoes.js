@@ -53,11 +53,13 @@ function blocoRondas() {
   const permissao = typeof Notification === 'undefined' ? 'indisponivel' : Notification.permission;
   return `<div class="campo campo--linha" style="margin-top:.4rem">
       <input type="checkbox" data-ronda-ativa ${s.ativo ? 'checked' : ''}>
-      <label>Atualizar os processos três vezes ao dia</label>
+      <label>Atualizar os processos ao abrir o sistema</label>
     </div>
-    <div class="mini mudo">Manhã, tarde e noite, com o sistema aberto. Cada ronda confere até
-      ${s.porRonda} processos, começando pelos que estão sem conferência há mais tempo —
-      ${s.emAcompanhamento} em acompanhamento.</div>
+    <div class="mini mudo">A ronda corre na primeira abertura de cada período — manhã, tarde e
+      noite —, então abrir uma vez ao dia já confere a carteira. Cada ronda cobre até
+      ${s.porRonda} processos, dos que estão sem conferência há mais tempo:
+      ${s.emAcompanhamento} em acompanhamento${s.emAcompanhamento > s.porRonda
+    ? ', acima do teto de uma ronda' : ''}.</div>
     <div class="mini" style="margin-top:.35rem">
       ${s.ultimaEm ? `Última ronda: ${esc(fmtDataHora(s.ultimaEm))} (${esc(s.ultimaJanela || '')}) ·
         ${s.consultados} processo(s), ${s.comNovidade} com novidade${s.semResposta

@@ -1576,7 +1576,8 @@ teste('tentativa frustrada conta como verificação, para a fila girar', () => {
 teste('a situação das rondas descreve o acompanhamento', () => {
   const s = rondas.situacaoDasRondas(emHora(18, 14));
   assert.equal(typeof s.emAcompanhamento, 'number');
-  assert.equal(s.porRonda, 25);
+  // O teto precisa cobrir a carteira de quem abre o sistema uma vez ao dia.
+  assert.ok(s.porRonda >= 60, 'a ronda cobre a carteira de uma vez');
   assert.ok(s.ultimaEm);
 });
 

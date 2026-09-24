@@ -4,10 +4,10 @@
 // processo a processo. Três vezes ao dia — manhã, tarde e noite — o sistema
 // percorre os processos ativos, consulta o tribunal e avisa o que mudou.
 //
-// A ronda corre no próprio navegador, enquanto o sistema está aberto: a base
-// fica no dispositivo de quem usa, e servidor nenhum sabe quais processos são
-// esses. Por isso a janela é ampla (manhã, tarde, noite) e não horário fixo:
-// basta abrir o sistema uma vez dentro dela para a ronda acontecer.
+// A ronda corre no próprio navegador, enquanto o sistema está aberto. Por isso
+// a janela é ampla (manhã, tarde, noite) e não horário fixo: basta abrir o
+// sistema uma vez dentro dela para a ronda acontecer, e quem abre uma única vez
+// ao dia tem a ronda daquela janela — não precisa estar presente nas três.
 
 import { db, modoAtual } from './store.js';
 import { hoje, iso, addDays, fmtCNJ, fmtData } from './util.js';
@@ -20,10 +20,12 @@ export const JANELAS = [
   { id: 'noite', rotulo: 'noite', inicio: 18, fim: 24 },
 ];
 
-// Processos por ronda. O limite evita dezenas de consultas seguidas ao tribunal
-// e reparte o acompanhamento: quem não entrou agora entra na ronda seguinte,
-// porque a fila é ordenada pelo que está sem conferência há mais tempo.
-const POR_RONDA = 25;
+// Processos por ronda. O limite existe para não disparar consultas sem fim ao
+// tribunal, não para repartir o acompanhamento: quem abre o sistema uma vez por
+// dia precisa que essa única ronda cubra a carteira inteira, sob pena de o
+// processo excedente ficar dias sem conferência. Com a espera entre consultas,
+// este teto leva cerca de um minuto, em segundo plano.
+const POR_RONDA = 60;
 const ESPERA_MS = 900;
 
 /**
